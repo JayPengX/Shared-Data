@@ -1,10 +1,12 @@
-# Every night at 02:00 Taiwan time (18:00 UTC): Taiwan's bus routes and
-# timetables from TDX, packed (build.mjs) and published on GitHub Pages.
+# Every Monday at 02:00 Taiwan time (Sunday 18:00 UTC): Taiwan's bus routes
+# and timetables from TDX, packed (build.mjs) and published on GitHub Pages.
+# Timetables change rarely, and holidays come with their own days in them
+# (SpecialDays); Run workflow builds it at once after a big change.
 # Needs the repo secrets TDX_CLIENT_ID and TDX_CLIENT_SECRET.
 name: Build
 on:
   schedule:
-    - cron: '0 18 * * *'
+    - cron: '0 18 * * 0'
   workflow_dispatch:
 permissions:
   contents: write
