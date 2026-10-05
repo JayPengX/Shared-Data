@@ -17,6 +17,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { auth, all } from './tdx.mjs';
 
 export const CELL = 0.02;
+const SQUARE = 0.25; // build.mjs's 公路客運 squares
 const cellOf = (lat, lon) => `${Math.floor(lat / CELL)}_${Math.floor(lon / CELL)}`;
 const BIKE_CITIES = ['Taipei', 'NewTaipei', 'Taoyuan', 'Hsinchu', 'HsinchuCounty', 'MiaoliCounty', 'Taichung', 'ChanghuaCounty', 'YunlinCounty', 'ChiayiCounty', 'Chiayi', 'Tainan', 'Kaohsiung', 'PingtungCounty', 'TaitungCounty'];
 
@@ -33,7 +34,10 @@ const mark = (lat, lon, k) => {
 for (const name of names) {
   const p = JSON.parse(await readFile(`site/bus/${name}.json`, 'utf8'));
   const k = packs.push(name) - 1;
-  for (const [, lat, lon] of Object.values(p.stops)) mark(lat, lon, k);
+  // (A 公路客運 square lists every stop of its routes, Kaohsiung's too: only its own count.)
+  const [la, lo] = name.startsWith('InterCity/') ? name.slice(10).split('_').map(Number) : [null, null];
+  const inside = (lat, lon) => la == null || (lat >= la && lat < la + SQUARE && lon >= lo && lon < lo + SQUARE);
+  for (const [, lat, lon] of Object.values(p.stops)) if (inside(lat, lon)) mark(lat, lon, k);
 }
 await auth();
 let bikes = 0;
