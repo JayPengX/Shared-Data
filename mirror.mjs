@@ -363,8 +363,21 @@ async function asia() {
   );
 }
 
+// A league's own photos (this season's team; ESPN's can be a year old): its
+// players' names and ids, for the kit's ownPhoto. NBA.com's players page
+// carries its whole list.
+async function leaguePhotos() {
+  const html = await get('https://www.nba.com/players', { text: true });
+  const players = [...String(html || '').matchAll(/"PERSON_ID":(\d+),"PLAYER_LAST_NAME":"([^"]*)","PLAYER_FIRST_NAME":"([^"]*)"/g)].map(([, id, last, first]) => [`${first} ${last}`.trim(), Number(id)]);
+  if (players.length < 300) return console.log(`nba photos: left out (${players.length} players)`);
+  await mkdir('site/sports/nba', { recursive: true });
+  await writeFile('site/sports/nba/photos.json', JSON.stringify({ built: NOW, players }));
+  console.log(`nba photos: ${players.length} players`);
+}
+
 async function main() {
   await readSeasons();
+  await leaguePhotos();
   const t0 = Date.now();
   const leagueQueue = [...ESPN_LEAGUES];
   await Promise.all(
