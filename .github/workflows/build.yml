@@ -1,13 +1,21 @@
-# Every Monday at 02:00 Taiwan time (Sunday 18:00 UTC): Taiwan's bus routes
-# and timetables from TDX, packed (build.mjs) and published on GitHub Pages.
-# Timetables change rarely, and holidays come with their own days in them
-# (SpecialDays); Run workflow builds it at once after a big change.
-# Needs the repo secrets TDX_CLIENT_ID and TDX_CLIENT_SECRET.
+# Every night at midnight Taiwan time (16:00 UTC): every league's season for
+# Orbit Sports and Quadra Play (sports.mjs), and on Mondays Taiwan's bus
+# routes and timetables from TDX (build.mjs; timetables change rarely, and
+# holidays come with their own days in them). The other nights the week's
+# bus packs are carried over as published (carry.mjs): a Pages deploy
+# replaces the whole site. Run workflow builds it at once (tick "buses" to
+# rebuild those too). The buses need the repo secrets TDX_CLIENT_ID and
+# TDX_CLIENT_SECRET.
 name: Build
 on:
   schedule:
-    - cron: '0 18 * * 0'
+    - cron: '0 16 * * *'
   workflow_dispatch:
+    inputs:
+      buses:
+        description: Rebuild the bus packs too
+        type: boolean
+        default: false
 permissions:
   contents: write
   pages: write
@@ -24,13 +32,26 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # The shared kit's league catalogue (which leagues, their ESPN paths).
+      - uses: actions/checkout@v4
+        with:
+          repository: JayPengX/Shared-Proxy
+          path: shared
+          sparse-checkout: kit
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node build.mjs
+      # Monday in Taiwan (Sunday 16:00 UTC), or asked for: the buses anew.
+      - name: Buses
+        run: |
+          if [ "$(date -u +%u)" = "7" ] || [ "${{ inputs.buses }}" = "true" ]; then node build.mjs; else node carry.mjs; fi
         env:
           TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
           TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
+      - name: Sports
+        run: node sports.mjs
+        env:
+          KIT: shared/kit
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
