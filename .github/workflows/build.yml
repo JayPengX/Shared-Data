@@ -4,7 +4,8 @@
 # holidays come with their own days in them). The other nights the week's
 # bus packs are carried over as published (carry.mjs): a Pages deploy
 # replaces the whole site. Run workflow builds it at once (tick "buses" to
-# rebuild those too). The buses need the repo secrets TDX_CLIENT_ID and
+# rebuild those too). Then the mirror (mirror.mjs): copies of the reads
+# Sports and Play would ask the proxy for, each good until it could change. The buses need the repo secrets TDX_CLIENT_ID and
 # TDX_CLIENT_SECRET.
 name: Build
 on:
@@ -26,7 +27,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -37,7 +38,13 @@ jobs:
         with:
           repository: JayPengX/Shared-Proxy
           path: shared
-          sparse-checkout: kit
+          sparse-checkout: |
+            kit
+            sports-proxy-worker.js
+            quadra-token.js
+            asia-baseball.js
+            f1-live.js
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -50,6 +57,11 @@ jobs:
           TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
       - name: Sports
         run: node sports.mjs
+        env:
+          KIT: shared/kit
+      # The mirror: copies of the reads the apps would ask the proxy for (mirror.mjs).
+      - name: Mirror
+        run: node mirror.mjs
         env:
           KIT: shared/kit
       - uses: actions/configure-pages@v5

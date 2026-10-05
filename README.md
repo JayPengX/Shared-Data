@@ -15,6 +15,19 @@ Play: the whole year from its month pages, without what no app reads.
 Locally: `node sports.mjs [league …]` (no keys; `KIT` is the shared kit's
 folder, `../Shared-Proxy/kit` by default).
 
+## The mirror (every night, after the seasons)
+
+Copies of the reads Orbit Sports and Quadra Play would ask the data proxy
+for (`mirror.mjs`): a day's and a month's games, finished box scores, every
+league's tables, teams, squads and players' season numbers, players' pages,
+F1's results and official pages, Asia's baseball months. Each is good until
+the first moment it could change (a team's next game, a day's first
+kickoff) and never past the next build; the shared kit's `proxyJson` reads
+it when `mirror/index.json` says it's held, at the kit's `mirrorPath(url)`.
+
+Locally: `node mirror.mjs` after `node sports.mjs` (`MIRROR_MINUTES`: time
+for players' pages, 25 by default; `MIRROR_MB`: room, 450 MB by default).
+
 ## Buses (Mondays)
 
 Taiwan's bus routes and timetables from [TDX](https://tdx.transportdata.tw),
