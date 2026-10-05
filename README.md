@@ -43,6 +43,10 @@ are right now stays live.
   the 公路客運, cut into squares of 0.25° (a route in every square it stops in)
 - `https://jaypengx.github.io/Shared-Data/index.json`: when it was built, and
   each pack's size
+- `https://jaypengx.github.io/Shared-Data/where.json` (every night,
+  `where.mjs`): Taiwan in cells of 0.02°, each listing the bus packs with a
+  stop in it and the cities with a YouBike station in it, so the app finds a
+  place's stops and bikes on the phone instead of asking TDX around each point
 
 The format is at the top of `build.mjs`.
 

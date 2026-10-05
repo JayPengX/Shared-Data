@@ -55,6 +55,13 @@ jobs:
         env:
           TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
           TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
+      # Which packs and YouBike cities are near each point (where.mjs), from
+      # the week's bus packs and TDX's bike stations.
+      - name: Where
+        run: node where.mjs
+        env:
+          TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
+          TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
       - name: Sports
         run: node sports.mjs
         env:

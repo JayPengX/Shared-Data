@@ -19,49 +19,11 @@
 // of its stops (one number: the first stop's, which is all 公路客運 often
 // gives), special TDX's SpecialDays as given; freq [[days, from, to, min, max]].
 import { mkdir, writeFile } from 'node:fs/promises';
+import { auth, all } from './tdx.mjs';
 
 const CITIES = ['Taipei', 'NewTaipei', 'Taoyuan', 'Taichung', 'Tainan', 'Kaohsiung', 'Keelung', 'Hsinchu', 'HsinchuCounty', 'MiaoliCounty', 'ChanghuaCounty', 'NantouCounty', 'YunlinCounty', 'Chiayi', 'ChiayiCounty', 'PingtungCounty', 'YilanCounty', 'HualienCounty', 'TaitungCounty', 'KinmenCounty', 'PenghuCounty', 'LienchiangCounty', 'InterCity'];
-const TDX = 'https://tdx.transportdata.tw/api/';
-const AUTH = 'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token';
-const PROXY = 'https://orbit-workers-proxy.pengzjay.workers.dev/transit/tdx?p=';
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const PAGE = 1000;
-
-const args = process.argv.slice(2);
-const viaProxy = args.includes('--proxy');
-const only = args.filter(a => !a.startsWith('--'));
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-let token = null;
-async function auth() {
-  const { TDX_CLIENT_ID: id, TDX_CLIENT_SECRET: secret } = process.env;
-  if (!id || !secret) throw new Error('TDX_CLIENT_ID and TDX_CLIENT_SECRET are needed (or --proxy)');
-  const res = await fetch(AUTH, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'client_credentials', client_id: id, client_secret: secret }) });
-  if (!res.ok) throw new Error(`TDX sign-in: ${res.status}`);
-  token = (await res.json()).access_token;
-}
-// One ask (4 a second at most: TDX refuses past 5), tried again a few times.
-async function ask(path) {
-  for (let tries = 0; ; tries++) {
-    await sleep(260);
-    const url = viaProxy ? PROXY + encodeURIComponent(path) : `${TDX}${path}${path.includes('?') ? '&' : '?'}$format=JSON`;
-    const res = await fetch(url, viaProxy ? { headers: { Origin: 'http://localhost:8765' } } : { headers: { Authorization: `Bearer ${token}`, 'Accept-Encoding': 'gzip' } }).catch(e => ({ ok: false, status: String(e) }));
-    if (res.ok) return res.json();
-    if (res.status === 401 && !viaProxy) await auth();
-    if (tries >= 4) throw new Error(`${path}: ${res.status}`);
-    await sleep(2000 * (tries + 1));
-  }
-}
-// Every row, a page at a time.
-async function all(path) {
-  const out = [];
-  for (let skip = 0; ; skip += PAGE) {
-    const rows = await ask(`${path}?$top=${PAGE}&$skip=${skip}`);
-    const list = Array.isArray(rows) ? rows : rows?.Routes || rows?.data || [];
-    out.push(...list);
-    if (list.length < PAGE) return out;
-  }
-}
+const only = process.argv.slice(2).filter(a => !a.startsWith('--'));
 
 const zh = x => (typeof x === 'string' ? x : x?.Zh_tw || '');
 const mins = t => {
@@ -130,7 +92,7 @@ async function squares(p) {
   return sizes;
 }
 
-if (!viaProxy) await auth();
+await auth();
 await mkdir('site/bus', { recursive: true });
 const index = { built: new Date().toISOString(), cities: {} };
 let failed = 0;
