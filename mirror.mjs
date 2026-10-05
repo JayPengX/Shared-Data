@@ -266,18 +266,16 @@ async function teams(key, l) {
   const mine = [];
   await Promise.all(
     ids.map(async id => {
-      const until = untilTeam(l.espn, id);
-      if (until <= Date.now() + 10 * 60_000) return;
+      if (untilTeam(l.espn, id) <= Date.now() + 10 * 60_000) return;
       const page = `${SITE}/${club}/teams/${id}`;
       const sched = `${SITE}/${club}/teams/${id}/schedule`;
       const squad = `${SITE}/${l.espn}/teams/${id}/roster`;
-      const [p, s, r] = await Promise.all([written.has(`!${page}`) ? null : get(page), written.has(`!${sched}`) ? null : get(sched), get(squad)]);
+      const [p, s, r, f] = await Promise.all([written.has(`!${page}`) ? null : get(page), written.has(`!${sched}`) ? null : get(sched), get(squad), soccer && !written.has(`!${sched}?fixture=true`) ? get(`${sched}?fixture=true`) : null]);
+      // Its next game in any competition (a cup no app follows too): from its own games.
+      const until = Math.min(untilTeam(l.espn, id), nextOf(s?.events), nextOf(f?.events), ...(p?.team?.nextEvent || []).map(e => (over(e) ? LAST : Date.parse(e.date) || LAST)));
       if (p) await put(kTeam, page, '', until, slim(p));
       if (s) await put(kTeam, sched, '', until, slim(s));
-      if (soccer && !written.has(`!${sched}?fixture=true`)) {
-        const f = await get(`${sched}?fixture=true`);
-        if (f) await put(kTeam, `${sched}?fixture=true`, '', until, slim(f));
-      }
+      if (f) await put(kTeam, `${sched}?fixture=true`, '', until, slim(f));
       if (!soccer && s?.requestedSeason?.type === 3) {
         const reg = await get(`${sched}?seasontype=2`);
         if (reg) await put(kTeam, `${sched}?seasontype=2`, '', until, slim(reg));
