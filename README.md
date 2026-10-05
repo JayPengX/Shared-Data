@@ -1,4 +1,4 @@
-# Transit-Data
+# Shared-Data
 
 The family's nightly data packs on GitHub Pages: what doesn't change in a
 day, read from here instead of through the data proxy.
@@ -8,9 +8,9 @@ day, read from here instead of through the data proxy.
 Every league's season from ESPN (`sports.mjs`), for Orbit Sports and Quadra
 Play: the whole year from its month pages, without what no app reads.
 
-- `https://jaypengx.github.io/Transit-Data/sports/<league>/<year>.json`
+- `https://jaypengx.github.io/Shared-Data/sports/<league>/<year>.json`
   (the league keys of the shared kit's catalog: `nba`, `epl`, `f1`…)
-- `https://jaypengx.github.io/Transit-Data/sports/index.json`
+- `https://jaypengx.github.io/Shared-Data/sports/index.json`
 
 Locally: `node sports.mjs [league …]` (no keys; `KIT` is the shared kit's
 folder, `../Shared-Proxy/kit` by default).
@@ -24,11 +24,11 @@ on the phone: a trip's buses (which way a route goes, its stops, its times at
 each) are worked out there without asking TDX line by line. Where the buses
 are right now stays live.
 
-- `https://jaypengx.github.io/Transit-Data/bus/<City>.json`: a city's routes
+- `https://jaypengx.github.io/Shared-Data/bus/<City>.json`: a city's routes
   (`Hsinchu`, `HsinchuCounty`, `Taipei`…)
-- `https://jaypengx.github.io/Transit-Data/bus/InterCity/<lat>_<lon>.json`:
+- `https://jaypengx.github.io/Shared-Data/bus/InterCity/<lat>_<lon>.json`:
   the 公路客運, cut into squares of 0.25° (a route in every square it stops in)
-- `https://jaypengx.github.io/Transit-Data/index.json`: when it was built, and
+- `https://jaypengx.github.io/Shared-Data/index.json`: when it was built, and
   each pack's size
 
 The format is at the top of `build.mjs`.

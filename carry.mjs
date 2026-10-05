@@ -3,7 +3,7 @@
 // nightly build carries the week's bus packs over). Fails when they can't
 // all be read: the deploy then doesn't happen and the site stays as it was.
 import { mkdir, writeFile } from 'node:fs/promises';
-const BASE = 'https://jaypengx.github.io/Transit-Data/';
+const BASE = 'https://jaypengx.github.io/Shared-Data/';
 async function get(path) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(BASE + path).catch(error => ({ ok: false, status: String(error) }));
