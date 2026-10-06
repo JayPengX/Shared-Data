@@ -24,7 +24,7 @@ const LIB = resolve(process.env.SPORTS_LIB || '../Orbit-Sports/public/lib');
 const { CATALOG, asiaMonthUrl, asiaMonthOf } = await import(pathToFileURL(`${KIT}/catalog.mjs`).href);
 const { trimPolymarketGames } = await import(pathToFileURL(`${ROOT}/sports-proxy-worker.js`).href);
 const { asiaBaseballResponse } = await import(pathToFileURL(`${ROOT}/asia-baseball.js`).href);
-const { polymarketLine, packLine, gameKey, PM_LEAGUE, PM_PACK, GAMES_TRIM, raceLine, raceLaps, packRace, raceKey } = await import(pathToFileURL(`${LIB}/winprob.mjs`).href);
+const { polymarketLine, packLine, gameKey, PM_LEAGUE, PM_PACK, GAMES_TRIM, raceLine, raceLaps, raceEvents, packRace, raceKey } = await import(pathToFileURL(`${LIB}/winprob.mjs`).href);
 
 const PUBLISHED = process.env.PUBLISHED || 'https://jaypengx.github.io/Shared-Data/';
 const SITE = 'https://site.api.espn.com/apis/site/v2/sports';
@@ -168,7 +168,15 @@ async function f1(games) {
   for (const r of races) {
     const t = Date.parse(r.date_start);
     const k = raceKey(r.date_start);
-    if (!keep(t) || games.has(k) || t > NOW - 4 * HOUR || r.is_cancelled) continue;
+    const kept = games.get(k);
+    // A race kept before its turns were (the safety car, stops, leads): those alone, once.
+    if (keep(t) && kept?.by === 'lap' && !kept.b) {
+      const laps = await raceLaps(r.date_start, read).catch(() => null);
+      const ev = laps && (await raceEvents(r.date_start, read, laps, kept.d).catch(() => null));
+      if (ev) Object.assign(kept, { b: ev.bands, e: ev.events }), stats.lines++;
+      continue;
+    }
+    if (!keep(t) || kept || t > NOW - 4 * HOUR || r.is_cancelled) continue;
     const laps = await raceLaps(r.date_start, read).catch(() => null);
     // OpenF1's laps come in a little after the race; two days on without them, by the clock.
     if (!laps && NOW - t < GIVE_UP) {
@@ -176,6 +184,7 @@ async function f1(games) {
       continue;
     }
     const line = await raceLine(r.date_start, read, laps).catch(() => null);
+    if (line && laps) Object.assign(line, (await raceEvents(r.date_start, read, laps, line.drivers).catch(() => null)) || {});
     if (line) stats.lines++, games.set(k, { t, ...packRace(line) });
     else if (NOW - t > GIVE_UP) stats.none++, games.set(k, { t, none: 'polymarket' });
     else stats.later++;
