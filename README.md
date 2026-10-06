@@ -101,6 +101,10 @@ The format is at the top of `build.mjs`.
   `carry.mjs` keeps the week's packs on the site), or now: Actions → Build →
   Run workflow, with "buses" ticked. Needs the repo secrets `TDX_CLIENT_ID` and
   `TDX_CLIENT_SECRET` (tdx.transportdata.tw → 會員中心 → API 金鑰).
+- The whole site is built only by the night's run. Run workflow by hand
+  builds just the part picked (`winprob` by default, `sports`, `mirror`, or
+  `everything`) on the site as last built (the last good build's Pages
+  artifact, kept three days), so a test costs a minute or two, not a night.
 - Locally: `node build.mjs [City …]` with those two in the environment, or
   `node build.mjs --proxy [City …]` through Orbit Transit's proxy (its dev
   door for localhost), no keys needed.
