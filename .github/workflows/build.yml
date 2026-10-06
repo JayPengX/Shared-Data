@@ -3,8 +3,10 @@
 # routes and timetables from TDX (build.mjs; timetables change rarely, and
 # holidays come with their own days in them). The other nights the week's
 # bus packs are carried over as published (carry.mjs): a Pages deploy
-# replaces the whole site. Run workflow builds it at once (tick "buses" to
-# rebuild those too). Then the mirror (mirror.mjs): copies of the reads
+# replaces the whole site. Run workflow (by hand) builds only the part asked
+# for (win probability by default) on the site as last built (the last
+# build's Pages artifact, kept three days), never the whole night again; tick
+# "buses" to rebuild those too. Then the mirror (mirror.mjs): copies of the reads
 # Sports and Play would ask the proxy for, each good until it could change;
 # before it, past games' win probability (winprob.mjs), read once and
 # carried over while Sports can show the game. The buses need the repo secrets TDX_CLIENT_ID and
@@ -15,12 +17,18 @@ on:
     - cron: '0 16 * * *'
   workflow_dispatch:
     inputs:
+      part:
+        description: What to build (the rest as last built)
+        type: choice
+        options: [winprob, sports, mirror, everything]
+        default: winprob
       buses:
         description: Rebuild the bus packs too
         type: boolean
         default: false
 permissions:
   contents: write
+  actions: read
   pages: write
   id-token: write
 concurrency:
@@ -33,6 +41,10 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      # The night's build (or asked for whole): every part; by hand, only the one asked for.
+      FULL: ${{ github.event_name == 'schedule' || inputs.part == 'everything' }}
+      PART: ${{ inputs.part }}
     steps:
       - uses: actions/checkout@v4
       # The shared kit's league catalogue (which leagues, their ESPN paths).
@@ -61,8 +73,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # By hand: the site as last built (the last good build's Pages artifact), the part asked for built on it.
+      - name: The site as last built
+        if: env.FULL != 'true'
+        run: |
+          id=$(gh run list --workflow build.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          gh run download "$id" --name github-pages --dir last
+          mkdir -p site && tar -xf last/artifact.tar -C site
+          echo "restored $(find site -type f | wc -l) files from run $id"
+        env:
+          GH_TOKEN: ${{ github.token }}
       # Monday in Taiwan (Sunday 16:00 UTC), or asked for: the buses anew.
       - name: Buses
+        if: env.FULL == 'true' || inputs.buses
         run: |
           if [ "$(date -u +%u)" = "7" ] || [ "${{ inputs.buses }}" = "true" ]; then node build.mjs; else node carry.mjs; fi
         env:
@@ -71,23 +94,27 @@ jobs:
       # Which packs and YouBike cities are near each point (where.mjs), from
       # the week's bus packs and TDX's bike stations.
       - name: Where
+        if: env.FULL == 'true' || inputs.buses
         run: node where.mjs
         env:
           TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
           TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
       - name: Sports
+        if: env.FULL == 'true' || env.PART == 'sports'
         run: node sports.mjs
         env:
           KIT: shared/kit
       # Past games' win probability while Sports can show them (winprob.mjs):
       # carried over from the published site, only the games over since read.
       - name: Win probability
+        if: env.FULL == 'true' || env.PART == 'winprob' || env.PART == 'sports'
         run: node winprob.mjs
         env:
           KIT: shared/kit
           SPORTS_LIB: sports-app/public/lib
       # The mirror: copies of the reads the apps would ask the proxy for (mirror.mjs).
       - name: Mirror
+        if: env.FULL == 'true' || env.PART == 'mirror'
         run: node mirror.mjs
         env:
           KIT: shared/kit
@@ -96,6 +123,8 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
+          # Kept three days: a build by hand starts from it.
+          retention-days: 3
       - id: deploy
         uses: actions/deploy-pages@v4
       # GitHub stops a scheduled workflow after 60 days without a commit: one
