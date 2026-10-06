@@ -10,8 +10,12 @@
 //
 // What's held, each good until the first moment it could change:
 //   - a day's and a month's games: until the first game in it not over yet starts
-//   - a game that's over, its box score: until the next build (carried over
-//     from the last published site, ESPN asked only for a game newly over)
+//   - a game that's over, its box score, a past day of them: until the next
+//     build (carried over from the last published site, ESPN asked only
+//     for what's newly over)
+//   - before a season's regular season, last season's playoffs (MLB, NBA,
+//     MLS: Sports' bracket): carried over the same way, none once it's on
+//   - last season's players' numbers (Play) only while this one is young
 //   - a league's tables, its players' season numbers: until its next game
 //   - last season's tables and numbers, a league's teams: until the next build
 //   - a team's page, its games, its squad, its players' pages: until its next game
@@ -179,12 +183,29 @@ const ESPN_LEAGUES = Object.entries(CATALOG).filter(([, l]) => l.data === 'espn'
 const US = new Set(['baseball', 'basketball', 'football', 'hockey']);
 const finished = new Map(); // espn → [event ids over in the last days]
 
+// What's over doesn't change (a game, a day of them): its copy as last
+// published is carried over (a Pages deploy replaces the whole site), ESPN
+// asked only for what's new.
+const PUBLISHED = 'https://jaypengx.github.io/Shared-Data/';
+function published(url, trim = '') {
+  return slot(async () => {
+    try {
+      const res = await fetch(`${PUBLISHED}${mirrorPath(url, trim)}`, { signal: AbortSignal.timeout(15_000) });
+      return res.ok ? ((await res.json())?.data ?? null) : null;
+    } catch {
+      return null;
+    }
+  });
+}
+const allOver = data => (data?.events || []).every(over);
 async function dayPages(key, l) {
   const k = kind('days', /^!https:\/\/site\.api\.espn\.com\/apis\/site\/v2\/sports\/[a-z0-9._-]+\/[a-z0-9._-]+\/scoreboard\?dates=\d{8}(&limit=200)?$/);
   await Promise.all(
     days(-7, 7).map(async d => {
       const url = `${SITE}/${l.espn}/scoreboard?dates=${d}&limit=200`;
-      const data = await get(url);
+      // A day before yesterday with every game over: as published.
+      const kept = d < taiwanDay(NOW - 86_400_000) ? await published(url) : null;
+      const data = kept && allOver(kept) ? (stats.carried = (stats.carried || 0) + 1, kept) : await get(url);
       if (!data) return;
       const until = nextOf(data.events);
       const s = slim(data);
@@ -206,19 +227,6 @@ async function monthPages(key, l) {
     )
   );
 }
-// A game over doesn't change: its copy as last published is carried over
-// (a Pages deploy replaces the whole site), ESPN asked only for one new.
-const PUBLISHED = 'https://jaypengx.github.io/Shared-Data/';
-function published(url, trim = '') {
-  return slot(async () => {
-    try {
-      const res = await fetch(`${PUBLISHED}${mirrorPath(url, trim)}`, { signal: AbortSignal.timeout(15_000) });
-      return res.ok ? ((await res.json())?.data ?? null) : null;
-    } catch {
-      return null;
-    }
-  });
-}
 async function boxScores(key, l) {
   const k = kind('games', /^!https:\/\/site\.api\.espn\.com\/apis\/site\/v2\/sports\/[a-z0-9._-]+\/[a-z0-9._-]+\/summary\?event=\d+$/);
   await Promise.all(
@@ -233,6 +241,56 @@ async function boxScores(key, l) {
       if (data && over(data.header?.competitions?.[0] ? { status: data.header.competitions[0].status } : null)) await put(k, url, '', LAST, slim(data));
     })
   );
+}
+// Sports' bracket before a season's regular season (Orbit Sports' app.js
+// lastSeason, for its FORMATS' leagues that aren't cups): last season's
+// calendar, then its game days a week at a time from its end back to a
+// week without playoff games. Over, so as published once read; none once
+// the regular season is on.
+const BRACKETS = new Set(['mlb', 'nba', 'mls']);
+const ymd = ms => new Date(ms).toISOString().slice(0, 10).replace(/-/g, '');
+export function phaseOf(type = {}) {
+  const name = `${type.name || ''} ${type.abbreviation || ''}`;
+  return type.type === 3 || /post|playoff|final|knockout/i.test(name) ? 'post' : type.type === 2 || /regular|league phase|group/i.test(name) ? 'regular' : type.type === 1 || /^\s*pre/i.test(name) ? 'pre' : type.type === 4 || /off/i.test(name) ? 'off' : '';
+}
+// A season's game days (Orbit Sports' parseCalendar): ESPN's list, or every day but those listed.
+export function calendarDays(data) {
+  const L = data?.leagues?.[0];
+  const cal = L?.calendar;
+  if (!Array.isArray(cal) || !cal.length || typeof cal[0] === 'object') return [];
+  const us = iso => String(iso).slice(0, 10).replaceAll('-', '');
+  if (L.calendarIsWhitelist !== false) return cal.map(us);
+  const off = new Set(cal.map(us));
+  const days = [];
+  for (let t = Date.parse(L.calendarStartDate), end = Date.parse(L.calendarEndDate); t <= end && days.length < 400; t += 86_400_000) if (!off.has(us(new Date(t).toISOString()))) days.push(us(new Date(t).toISOString()));
+  return days;
+}
+const playoffGame = e => e?.season?.type === 3 || /post|playoff/i.test(e?.season?.slug || '');
+export async function lastPlayoffs(key, l) {
+  if (!BRACKETS.has(key)) return;
+  const k = kind('days', /^!https:\/\/site\.api\.espn\.com\/apis\/site\/v2\/sports\/[a-z0-9._-]+\/[a-z0-9._-]+\/scoreboard\?dates=\d{8}(&limit=200)?$/);
+  const now = await get(`${SITE}/${l.espn}/scoreboard`);
+  const season = now?.leagues?.[0]?.season;
+  if (!['pre', 'off'].includes(phaseOf(season?.type)) || !Date.parse(season?.startDate)) return;
+  const asOf = async url => {
+    const kept = await published(url);
+    return kept && allOver(kept) ? kept : get(url);
+  };
+  const calUrl = `${SITE}/${l.espn}/scoreboard?dates=${ymd(Date.parse(season.startDate) - 3 * 86_400_000)}`;
+  const cal = await asOf(calUrl);
+  if (!cal) return;
+  await put(k, calUrl, '', LAST, slim(cal));
+  const days = calendarDays(cal).slice(-90).reverse();
+  const ms = d => Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6));
+  const today = ymd(NOW);
+  for (let i = 0; i < days.length; ) {
+    let j = i;
+    while (j < days.length && ms(days[j]) > ms(days[i]) - 7 * 86_400_000) j++;
+    const week = days.slice(i, (i = j));
+    const pages = await Promise.all(week.map(async d => [`${SITE}/${l.espn}/scoreboard?dates=${d}&limit=200`, await asOf(`${SITE}/${l.espn}/scoreboard?dates=${d}&limit=200`)]));
+    for (const [url, data] of pages) if (data) await put(k, url, '', LAST, slim(data));
+    if (!pages.some(([, data]) => (data?.events || []).some(playoffGame)) && week[0] < today) break;
+  }
 }
 async function tables(key, l) {
   const k = kind('tables', /^!https:\/\/site\.api\.espn\.com\/apis\/v2\/sports\/[a-z0-9._-]+\/[a-z0-9._-]+\/standings(\?(seasontype=2|season=\d{4}))?$/);
@@ -258,16 +316,38 @@ async function seasonNumbers(key, l) {
   const first = await get(url(null, 1));
   if (!first) return;
   const year = Number(first.requestedSeason?.year);
-  for (const [season, until] of [[null, leagueNext.get(key) ?? LAST], ...(year > 2000 ? [[year - 1, LAST]] : [])]) {
+  const read = async (season, until) => {
     const one = season ? await get(url(season, 1)) : first;
-    if (!one) continue;
-    const pages = Math.min(3, Number(one.pagination?.pages) || 1);
+    if (!one) return [];
+    const pages = [one];
     await put(k, url(season, 1), 'espn-athletes', until, trimEspnAthletes(one));
-    for (let p = 2; p <= pages; p++) {
+    for (let p = 2; p <= Math.min(3, Number(one.pagination?.pages) || 1); p++) {
       const more = await get(url(season, p));
-      if (more) await put(k, url(season, p), 'espn-athletes', until, trimEspnAthletes(more));
+      if (more) pages.push(more), await put(k, url(season, p), 'espn-athletes', until, trimEspnAthletes(more));
     }
-  }
+    return pages;
+  };
+  const now = await read(null, leagueNext.get(key) ?? LAST);
+  // Last season's, only while this one is young: Play reads it only then
+  // (its 31st most-played regular under 15 games, players.mjs YOUNG_GAMES).
+  if (year > 2000 && youngSeason(now)) await read(year - 1, LAST);
+}
+// The games each player has played this season, most first; young when the 31st has fewer than 15.
+export function youngSeason(pages) {
+  const gps = pages
+    .flatMap(page => {
+      const cats = page.categories || [];
+      return (page.athletes || []).map(a => {
+        for (const [ci, c] of cats.entries()) {
+          const i = (c.names || []).indexOf('gamesPlayed');
+          const v = Number(a.categories?.[ci]?.totals?.[i]);
+          if (i >= 0 && Number.isFinite(v)) return v;
+        }
+        return 0;
+      });
+    })
+    .sort((a, b) => b - a);
+  return (gps[Math.min(gps.length - 1, 30)] ?? 0) < 15;
 }
 // A league's teams, each team's page, games and squad; its players for later.
 const players = []; // [[league espn, athlete id, until]…] per league, for the round after
@@ -404,7 +484,7 @@ async function main() {
       for (let item; (item = leagueQueue.shift()); ) {
         const [key, l] = item;
         const t = Date.now();
-        await Promise.all([dayPages(key, l).then(() => boxScores(key, l)), monthPages(key, l), tables(key, l), seasonNumbers(key, l), teams(key, l)]);
+        await Promise.all([dayPages(key, l).then(() => boxScores(key, l)), monthPages(key, l), tables(key, l), seasonNumbers(key, l), teams(key, l), lastPlayoffs(key, l)]);
         console.log(`${key}: ${((Date.now() - t) / 1000).toFixed(0)} s`);
       }
     })

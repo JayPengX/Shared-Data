@@ -30,23 +30,37 @@ it when `mirror/index.json` says it's held, at the kit's `mirrorPath(url)`.
 Locally: `node mirror.mjs` after `node sports.mjs` (`MIRROR_MINUTES`: time
 for players' pages, 25 by default; `MIRROR_MB`: room, 450 MB by default).
 
-## Win probability (every night, kept for good)
+## Win probability (every night, while Sports can show the game)
 
 A finished game's win probability line where ESPN draws none (soccer, CPBL,
-an MLB game ESPN left without one): Polymarket's market on it, read once by
-`winprob.mjs` and committed here (`winprob/`), never read again. Orbit Sports
-reads a past game's line from here; one on now from Polymarket through the
-proxy. The matching is Orbit Sports' `public/lib/winprob.mjs` (checked out
-beside the kit by the workflow).
+an MLB or NBA game ESPN left without one): Polymarket's market on it, read
+once by `winprob.mjs` and carried over each night from the published site,
+never read again. Kept while its league's season runs, and before the next
+one's regular season its playoffs (the bracket shows them); older is let
+go. Orbit Sports reads a past game's line from here, one on now from
+Polymarket through the proxy. The matching and the format are Orbit Sports'
+`public/lib/winprob.mjs` (checked out beside the kit by the workflow).
 
-- `https://jaypengx.github.io/Shared-Data/winprob/<league>/<game>.json`:
-  `{ source, market, points: [{ t, home, draw? }] }`, or `{ none }` (ESPN
-  draws its own, or Polymarket had no market). ESPN's games by their id,
-  CPBL's by the day and the home side (`2026-09-27-lions`).
+- `https://jaypengx.github.io/Shared-Data/winprob/<league>/<YYYY-MM>.json`:
+  a month's games, `{ games: { key: { m, t0, p } | { none } } }`. ESPN's
+  games by their id, CPBL's by the day and the home side (`2026-09-27-lions`).
+- `https://jaypengx.github.io/Shared-Data/winprob/index.json`: each league's months.
 
-Locally: `node winprob.mjs` after `node sports.mjs` (`WINPROB_DAYS`: how far
-back, 4 by default; `SPORTS_LIB`: Orbit Sports' `public/lib`,
-`../Orbit-Sports/public/lib` by default).
+Locally: `node winprob.mjs` after `node sports.mjs` (`SPORTS_LIB`: Orbit
+Sports' `public/lib`, `../Orbit-Sports/public/lib` by default).
+
+## What's kept of the past
+
+Only what an app shows, and what's over is read once:
+
+- a season pack's months over: carried from last night's pack, ESPN read
+  from ten days back on; last year's pack only while the league's season
+  began in it (the NBA's, Europe's football's until summer)
+- past days and finished games' box scores (the last week): carried over
+- last season's playoffs (MLB, NBA, MLS) only before the next regular
+  season (Sports' bracket), carried over
+- last season's tables all year (Play's prices weigh them); last season's
+  players' numbers only while this one is young (Play's YOUNG_GAMES)
 
 ## Buses (Mondays)
 

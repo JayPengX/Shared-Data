@@ -6,8 +6,8 @@
 # replaces the whole site. Run workflow builds it at once (tick "buses" to
 # rebuild those too). Then the mirror (mirror.mjs): copies of the reads
 # Sports and Play would ask the proxy for, each good until it could change;
-# before it, past games' win probability (winprob.mjs), read once and kept
-# in this repo for good. The buses need the repo secrets TDX_CLIENT_ID and
+# before it, past games' win probability (winprob.mjs), read once and
+# carried over while Sports can show the game. The buses need the repo secrets TDX_CLIENT_ID and
 # TDX_CLIENT_SECRET.
 name: Build
 on:
@@ -76,19 +76,10 @@ jobs:
         run: node sports.mjs
         env:
           KIT: shared/kit
-      # Past games' win probability, kept for good (winprob.mjs): only the
-      # games over since the last night are read, committed here and published.
+      # Past games' win probability while Sports can show them (winprob.mjs):
+      # carried over from the published site, only the games over since read.
       - name: Win probability
-        run: |
-          node winprob.mjs
-          if [ -n "$(git status --porcelain winprob)" ]; then
-            git config user.name "shared-data-bot"
-            git config user.email "actions@users.noreply.github.com"
-            git add winprob
-            git commit -q -m "Win probability: the games over by $(date -u +%F)"
-            for i in 1 2 3; do git pull -q --rebase origin main && git push -q && break; sleep 5; done
-          fi
-          cp -r winprob site/
+        run: node winprob.mjs
         env:
           KIT: shared/kit
           SPORTS_LIB: sports-app/public/lib

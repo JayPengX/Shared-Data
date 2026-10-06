@@ -1,18 +1,19 @@
-// Past games' win probability, kept for good: a game over doesn't change, so
-// its line is read once (Polymarket's market on it, where ESPN draws none:
-// soccer, CPBL, an MLB game ESPN left without one) and kept in this repo at
-// winprob/<league>/<game>.json, published with the site. Each night only the
-// games over since are read; Orbit Sports reads a past game's line from here
-// (lib/winprob.mjs there: the matching, the line and the file's name, shared).
+// Past games' win probability, while Orbit Sports can show them: a game
+// over doesn't change, so its line is read once (Polymarket's market on it,
+// where ESPN draws none: soccer, CPBL, an MLB or NBA game ESPN left without
+// one) and carried over each night from the published site (a Pages deploy
+// replaces the whole site), never read again. Kept while its league's
+// current season runs, and before the next one's regular season its
+// playoffs (the bracket shows them); anything older is let go.
 //
-//   node winprob.mjs      (KIT: the shared kit's folder, ../Shared-Proxy/kit by default;
-//                          SPORTS_LIB: Orbit Sports' public/lib, ../Orbit-Sports/public/lib;
-//                          WINPROB_DAYS: how far back to look, 4 days by default)
+//   node winprob.mjs      (after sports.mjs; KIT: the shared kit's folder,
+//                          ../Shared-Proxy/kit by default; SPORTS_LIB: Orbit
+//                          Sports' public/lib, ../Orbit-Sports/public/lib)
 //
-// A file is { source: 'polymarket', points: [{ t, home, draw? }] }, or
-// { none: 'espn' | 'polymarket' }: ESPN draws its own, or no market was found
-// two days on (none is asked about again).
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+// → site/winprob/<league>/<YYYY-MM>.json ({ games: { key: line | { none } } },
+// the format at Orbit Sports' lib/winprob.mjs, which reads it) and
+// site/winprob/index.json ({ built, leagues: { key: { months, kept } } }).
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -22,16 +23,20 @@ const LIB = resolve(process.env.SPORTS_LIB || '../Orbit-Sports/public/lib');
 const { CATALOG, asiaMonthUrl, asiaMonthOf } = await import(pathToFileURL(`${KIT}/catalog.mjs`).href);
 const { trimPolymarketGames } = await import(pathToFileURL(`${ROOT}/sports-proxy-worker.js`).href);
 const { asiaBaseballResponse } = await import(pathToFileURL(`${ROOT}/asia-baseball.js`).href);
-const { polymarketLine, packPath, PM_LEAGUE, GAMES_TRIM } = await import(pathToFileURL(`${LIB}/winprob.mjs`).href);
+const { polymarketLine, packLine, gameKey, PM_LEAGUE, PM_PACK, GAMES_TRIM } = await import(pathToFileURL(`${LIB}/winprob.mjs`).href);
 
+const PUBLISHED = process.env.PUBLISHED || 'https://jaypengx.github.io/Shared-Data/';
 const SITE = 'https://site.api.espn.com/apis/site/v2/sports';
 const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
 const NOW = Date.now();
-const FROM = NOW - Number(process.env.WINPROB_DAYS || 4) * 24 * HOUR;
-// A game's market can take a while to settle; after two days without one, none.
-const GIVE_UP = 2 * 24 * HOUR;
+// A game's market can take a while to settle; two days on without one, none.
+const GIVE_UP = 2 * DAY;
+// Where ESPN draws its own (all but a game now and then), only the last week is looked at.
+const ESPN_DRAWS = new Set(['baseball', 'basketball', 'football', 'hockey']);
+const month = ms => new Date(ms).toISOString().slice(0, 7);
 
-async function get(url, trim = '') {
+async function get(url, { trim = '', missing = null } = {}) {
   for (let attempt = 0; ; attempt++) {
     try {
       const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (orbit-winprob)' }, signal: AbortSignal.timeout(30_000) });
@@ -39,25 +44,44 @@ async function get(url, trim = '') {
         const data = await res.json();
         return trim === GAMES_TRIM ? trimPolymarketGames(data) : data;
       }
-      if (res.status === 404 || res.status === 400 || attempt >= 2) return null;
-    } catch {
-      if (attempt >= 2) return null;
-    }
-    await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+      if (res.status === 404) return missing;
+      if (res.status === 400) return null;
+    } catch {}
+    if (attempt >= 3) throw new Error(`${url}: unread`);
+    await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
   }
 }
-const have = path => access(path).then(() => true, () => false);
 
-// The games over in the window: from tonight's season packs (sports.mjs), CPBL from its months.
-async function finishedGames(key, l) {
+// ---- What's kept: the league's season now, and its last playoffs before the next regular season ----
+// ESPN's leagues: the season its scoreboard is on ({ start, phase }); CPBL's: the calendar year.
+async function seasonOf(key, l) {
   if (l.data === 'asia') {
-    const months = [...new Set([asiaMonthOf(FROM), asiaMonthOf(NOW)])];
-    const lists = await Promise.all(months.map(async ym => (await (await asiaBaseballResponse(new URL(asiaMonthUrl(l.asia, ym)))).json().catch(() => null))?.games || []));
-    return lists.flat().filter(g => g.state === 'post').map(g => ({ id: g.id, start: g.start, home: g.home, away: g.away }));
+    const y = new Date(NOW).getUTCFullYear();
+    return { start: Date.UTC(y, 0, 1), phase: null };
   }
-  const years = [...new Set([new Date(FROM).getUTCFullYear(), new Date(NOW).getUTCFullYear()])];
+  const data = await get(`${SITE}/${l.espn}/scoreboard`).catch(() => null);
+  const s = data?.leagues?.[0]?.season;
+  const t = s?.type?.type;
+  return { start: Date.parse(s?.startDate || '') || NOW - 180 * DAY, phase: t === 1 ? 'pre' : t === 4 ? 'off' : t === 2 ? 'regular' : t === 3 ? 'post' : null };
+}
+// Kept: a game of this season; before this season's regular season (or, for
+// CPBL, before its first game this year), last season's playoffs too.
+function keeps(season, entry, cpblStarted) {
+  if (entry.t >= season.start) return true;
+  const before = season.phase === 'pre' || season.phase === 'off' || (season.phase === null && !cpblStarted);
+  return before && Boolean(entry.post) && entry.t >= season.start - 365 * DAY;
+}
+
+// ---- The games over: tonight's season packs (sports.mjs), CPBL from its months ----
+async function finishedGames(key, l, from) {
+  if (l.data === 'asia') {
+    const months = [...new Set([asiaMonthOf(from), asiaMonthOf(NOW - 31 * DAY), asiaMonthOf(NOW)])];
+    const lists = await Promise.all(months.map(async ym => (await (await asiaBaseballResponse(new URL(asiaMonthUrl(l.asia, ym)))).json().catch(() => null))?.games || []));
+    // CPBL's playoffs: from October on.
+    return lists.flat().filter(g => g.state === 'post').map(g => ({ id: g.id, start: g.start, home: g.home, away: g.away, post: new Date(g.start).getUTCMonth() >= 9 }));
+  }
   const games = [];
-  for (const y of years) {
+  for (const y of new Set([new Date(from).getUTCFullYear(), new Date(NOW).getUTCFullYear()])) {
     let pack;
     try {
       pack = JSON.parse(await readFile(`site/sports/${key}/${y}.json`, 'utf8'));
@@ -67,52 +91,86 @@ async function finishedGames(key, l) {
     for (const e of pack.events || []) {
       const comp = e.competitions?.[0];
       if ((e.status?.type?.state || comp?.status?.type?.state) !== 'post') continue;
-      const side = h => comp?.competitors?.find(c => c.homeAway === h)?.team;
-      const [home, away] = [side('home'), side('away')];
-      if (home && away) games.push({ id: String(e.id), start: comp?.date || e.date, home: { en: home.displayName || home.name }, away: { en: away.displayName || away.name } });
+      const team = h => comp?.competitors?.find(c => c.homeAway === h)?.team;
+      const [home, away] = [team('home'), team('away')];
+      if (home && away) games.push({ id: String(e.id), start: comp?.date || e.date, home: { en: home.displayName || home.name }, away: { en: away.displayName || away.name }, post: e.season?.type === 3 || /post|playoff|play-in/i.test(e.season?.slug || '') });
     }
   }
   return games;
 }
 
-const stats = { kept: 0, lines: 0, espn: 0, none: 0, later: 0 };
-async function league(key, l) {
-  const sport = l.sport;
-  const games = (await finishedGames(key, l)).filter(g => Date.parse(g.start) >= FROM && Date.parse(g.start) < NOW - 3 * HOUR);
-  for (const g of games) {
-    const file = packPath(key, g);
-    if (await have(file)) {
-      stats.kept++;
-      continue;
+// ---- The store as last published ----
+async function published() {
+  const index = await get(`${PUBLISHED}${PM_PACK}/index.json`, { missing: { leagues: {} } });
+  const store = new Map();
+  for (const [key, { months = [] } = {}] of Object.entries(index.leagues || {})) {
+    const games = new Map();
+    for (const m of months) {
+      const file = await get(`${PUBLISHED}${PM_PACK}/${key}/${m}.json`, { missing: { games: {} } });
+      for (const [k, v] of Object.entries(file.games || {})) games.set(k, v);
     }
-    const write = async data => {
-      await mkdir(resolve(file, '..'), { recursive: true });
-      await writeFile(file, JSON.stringify(data));
-    };
-    // ESPN's own line where it draws one (never for soccer).
-    if (l.espn && sport !== 'soccer') {
-      const summary = await get(`${SITE}/${l.espn}/summary?event=${g.id}`);
-      if ((summary?.winprobability || []).length > 3) {
-        stats.espn++;
-        await write({ none: 'espn' });
-        continue;
-      }
-    }
-    const line = await polymarketLine(key, { start: g.start, home: g.home.en, away: g.away.en }, (url, { trim = '' }) => get(url, trim)).catch(() => null);
-    if (line) {
-      stats.lines++;
-      await write(line);
-    } else if (NOW - Date.parse(g.start) > GIVE_UP) {
-      stats.none++;
-      await write({ none: 'polymarket' });
-    } else stats.later++;
+    store.set(key, games);
   }
+  return store;
 }
 
-const leagues = Object.entries(CATALOG).filter(([key]) => PM_LEAGUE[key]);
-for (const [key, l] of leagues) {
-  const before = { ...stats };
-  await league(key, l);
-  console.log(`${key}: ${stats.lines - before.lines} lines, ${stats.espn - before.espn} ESPN's, ${stats.none - before.none} none, ${stats.later - before.later} later, ${stats.kept - before.kept} kept`);
+const stats = { carried: 0, lines: 0, espn: 0, none: 0, later: 0, dropped: 0 };
+async function league(key, l, games) {
+  const season = await seasonOf(key, l);
+  const espnDraws = l.data === 'espn' && ESPN_DRAWS.has(l.sport);
+  const from = espnDraws ? NOW - 7 * DAY : season.start - 365 * DAY;
+  const finished = (await finishedGames(key, l, from)).filter(g => Date.parse(g.start) >= from && Date.parse(g.start) < NOW - 3 * HOUR);
+  const cpblStarted = l.data === 'asia' && finished.some(g => Date.parse(g.start) >= season.start);
+  const todo = finished.filter(g => keeps(season, { t: Date.parse(g.start), post: g.post }, cpblStarted) && !games.has(gameKey(key, g)));
+  // Six games at a time (a first night reads a whole season's).
+  await Promise.all(
+    Array.from({ length: 6 }, async () => {
+      for (let g; (g = todo.shift()); ) {
+        const t = Date.parse(g.start);
+        const entry = { t, post: g.post ? 1 : 0 };
+        const k = gameKey(key, g);
+        // ESPN's own line where it draws one.
+        if (espnDraws) {
+          const summary = await get(`${SITE}/${l.espn}/summary?event=${g.id}`).catch(() => null);
+          if ((summary?.winprobability || []).length > 3) {
+            stats.espn++;
+            games.set(k, { ...entry, none: 'espn' });
+            continue;
+          }
+        }
+        const line = await polymarketLine(key, { start: g.start, home: g.home.en, away: g.away.en }, (url, { trim = '' }) => get(url, { trim })).catch(() => null);
+        if (line) {
+          stats.lines++;
+          games.set(k, { ...entry, ...packLine(line) });
+        } else if (NOW - t > GIVE_UP) {
+          stats.none++;
+          games.set(k, { ...entry, none: 'polymarket' });
+        } else stats.later++;
+      }
+    })
+  );
+  // Let go of what the app no longer shows.
+  for (const [k, v] of games) if (!keeps(season, v, cpblStarted)) games.delete(k), stats.dropped++;
+  return season;
 }
-console.log(`winprob: ${stats.lines} new lines, ${stats.kept} kept from before`);
+
+const store = await published();
+for (const games of store.values()) stats.carried += games.size;
+const index = { built: new Date(NOW).toISOString(), leagues: {} };
+for (const [key, l] of Object.entries(CATALOG).filter(([k]) => PM_LEAGUE[k])) {
+  const games = store.get(key) || new Map();
+  const before = { ...stats };
+  await league(key, l, games);
+  const months = new Map();
+  for (const [k, v] of games) {
+    const m = month(v.t);
+    if (!months.has(m)) months.set(m, {});
+    months.get(m)[k] = v;
+  }
+  await mkdir(`site/${PM_PACK}/${key}`, { recursive: true });
+  for (const [m, list] of months) await writeFile(`site/${PM_PACK}/${key}/${m}.json`, JSON.stringify({ games: list }));
+  index.leagues[key] = { months: [...months.keys()].sort(), kept: games.size };
+  console.log(`${key}: ${games.size} kept in ${months.size} months (${stats.lines - before.lines} new lines, ${stats.espn - before.espn} ESPN's, ${stats.none - before.none} none, ${stats.later - before.later} later, ${stats.dropped - before.dropped} let go)`);
+}
+await writeFile(`site/${PM_PACK}/index.json`, JSON.stringify(index));
+console.log(`winprob: ${stats.carried} carried over, ${stats.lines} new lines, ${stats.dropped} let go`);
