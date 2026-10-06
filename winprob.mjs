@@ -155,8 +155,8 @@ async function league(key, l, games) {
   return season;
 }
 
-// What a race's turns hold (4: the safety car's cause, every read answered, who led away); one kept with less is read again once.
-const TURNS = 4;
+// What a race's turns hold (5: the safety car's cause, every read answered, who led away, red flags only said); one kept with less is read again once.
+const TURNS = 5;
 
 // ---- F1: each race's chances by lap (OpenF1's laps once it has them) ----
 // Kept: this year's races; until this year's first, last year's too (the
