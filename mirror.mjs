@@ -548,6 +548,75 @@ async function leaguePhotos() {
   console.log(`nba photos: ${kept.length} of ${players.length} players have one`);
 }
 const NBA_PHOTO = id => `https://cdn.nba.com/headshots/nba/latest/260x190/${id}.png`;
+
+// The Premier League's own photos (ESPN has none for footballers: its soccer
+// headshots answer 404). The league's API lists this season's players with
+// their Opta ids; a photo is on its current path, or its older one ('o').
+// Each player under every name ESPN may use (the display name, first and
+// last, with the middle name too), so the kit finds them by ESPN's.
+const PL_API = 'https://footballapi.pulselive.com/football';
+const PL_HEADERS = { Origin: 'https://www.premierleague.com', Referer: 'https://www.premierleague.com/', 'User-Agent': 'Mozilla/5.0 (orbit-mirror)' };
+export const PL_PHOTO = (id, old) => (old ? `https://resources.premierleague.com/premierleague/photos/players/250x250/p${id}.png` : `https://resources.premierleague.com/premierleague25/photos/players/110x140/${id}.png`);
+export function plNames(list, clubs = new Set()) {
+  const out = [];
+  for (const x of list || []) {
+    const id = String(x?.altIds?.opta || '').replace(/^p/, '');
+    const n = x?.name || {};
+    if (!/^\d+$/.test(id) || /trialist/i.test(n.display || '')) continue;
+    const full = [n.first, n.last].filter(Boolean).join(' ').trim();
+    const words = full.split(/\s+/);
+    const names = new Set([n.display, full, [n.first, n.middle, n.last].filter(Boolean).join(' '), words.length > 2 ? `${words[0]} ${words.at(-1)}` : ''].map(v => String(v || '').trim()).filter(Boolean));
+    const here = clubs.has(x?.currentTeam?.name);
+    for (const name of names) out.push([name, Number(id), here]);
+  }
+  // A name two players share: the one at a club in the league this season
+  // (the list keeps players who've left); still two ("Gabriel"), neither: no
+  // face is better than a wrong one.
+  const ids = new Map();
+  for (const [name, id, here] of out) {
+    const k = name.toLowerCase();
+    if (!ids.has(k)) ids.set(k, { all: new Set(), here: new Set() });
+    ids.get(k).all.add(id);
+    if (here) ids.get(k).here.add(id);
+  }
+  const pick = k => (ids.get(k).all.size === 1 ? [...ids.get(k).all][0] : ids.get(k).here.size === 1 ? [...ids.get(k).here][0] : null);
+  const seen = new Set();
+  return out.filter(([name, id]) => pick(name.toLowerCase()) === id && !seen.has(`${name}|${id}`) && seen.add(`${name}|${id}`)).map(([name, id]) => [name, id]);
+}
+async function plJson(path) {
+  const res = await fetch(`${PL_API}${path}`, { headers: PL_HEADERS, signal: AbortSignal.timeout(30_000) }).catch(() => null);
+  return res?.ok ? res.json() : null;
+}
+export async function plPhotos() {
+  const season = (await plJson('/competitions/1/compseasons?page=0&pageSize=1'))?.content?.[0]?.id;
+  if (!season) return console.log('epl photos: left out (no season)');
+  // Each club's squad this season (the league's paged list of players stops short of its own count).
+  const teams = (await plJson(`/teams?pageSize=40&compSeasons=${season}&comps=1&page=0`))?.content || [];
+  if (teams.length < 18) return console.log(`epl photos: left out (${teams.length} clubs)`);
+  const squads = await Promise.all(teams.map(t => plJson(`/teams/${Number(t.id)}/compseasons/${season}/staff?pageSize=100&altIds=true&type=player`)));
+  if (squads.some(x => !x?.players)) return console.log('epl photos: left out (a squad failed)');
+  const all = squads.flatMap((x, i) => x.players.map(p => ({ ...p, currentTeam: { name: teams[i].name } })));
+  const named = plNames(all, new Set(teams.map(t => t.name)));
+  const ids = [...new Set(named.map(([, id]) => id))];
+  const status = async u => (await fetch(u, { method: 'HEAD', signal: AbortSignal.timeout(15_000) }).catch(() => null))?.status || 0;
+  // Which path has each photo: 'n' (current), 'o' (older), '' none; a failed read (0) keeps the current.
+  const where = new Map();
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: 16 }, async () => {
+      while (next < ids.length) {
+        const id = ids[next++];
+        const now = await status(PL_PHOTO(id));
+        where.set(id, now === 200 || now === 0 ? 'n' : (await status(PL_PHOTO(id, true))) === 200 ? 'o' : '');
+      }
+    })
+  );
+  const players = named.filter(([, id]) => where.get(id)).map(([name, id]) => (where.get(id) === 'o' ? [name, id, 'o'] : [name, id]));
+  if (ids.length < 400) return console.log(`epl photos: left out (${ids.length} players)`);
+  await mkdir('site/sports/epl', { recursive: true });
+  await writeFile('site/sports/epl/photos.json', JSON.stringify({ built: NOW, players }));
+  console.log(`epl photos: ${[...where.values()].filter(Boolean).length} of ${ids.length} players have one`);
+}
 // The players whose photo isn't the silhouette. A failed read (no tag) keeps
 // the player: a photo that may be there isn't dropped for a failed read.
 export async function withPhotos(players, tag, silhouette, at = 16) {
@@ -569,6 +638,7 @@ async function main() {
   lastBuilt = Number((await fetch(`${PUBLISHED}mirror/index.json`, { signal: AbortSignal.timeout(15_000) }).then(r => (r.ok ? r.json() : null)).catch(() => null))?.built) || 0;
   await readSeasons();
   await leaguePhotos();
+  await plPhotos();
   const t0 = Date.now();
   const leagueQueue = [...ESPN_LEAGUES];
   await Promise.all(
