@@ -10,7 +10,8 @@
 //
 // What's held, each good until the first moment it could change:
 //   - a day's and a month's games: until the first game in it not over yet starts
-//   - a game that's over, its box score: until the next build
+//   - a game that's over, its box score: until the next build (carried over
+//     from the last published site, ESPN asked only for a game newly over)
 //   - a league's tables, its players' season numbers: until its next game
 //   - last season's tables and numbers, a league's teams: until the next build
 //   - a team's page, its games, its squad, its players' pages: until its next game
@@ -205,11 +206,29 @@ async function monthPages(key, l) {
     )
   );
 }
+// A game over doesn't change: its copy as last published is carried over
+// (a Pages deploy replaces the whole site), ESPN asked only for one new.
+const PUBLISHED = 'https://jaypengx.github.io/Shared-Data/';
+function published(url, trim = '') {
+  return slot(async () => {
+    try {
+      const res = await fetch(`${PUBLISHED}${mirrorPath(url, trim)}`, { signal: AbortSignal.timeout(15_000) });
+      return res.ok ? ((await res.json())?.data ?? null) : null;
+    } catch {
+      return null;
+    }
+  });
+}
 async function boxScores(key, l) {
   const k = kind('games', /^!https:\/\/site\.api\.espn\.com\/apis\/site\/v2\/sports\/[a-z0-9._-]+\/[a-z0-9._-]+\/summary\?event=\d+$/);
   await Promise.all(
     [...new Set(finished.get(l.espn) || [])].map(async id => {
       const url = `${SITE}/${l.espn}/summary?event=${id}`;
+      const kept = await published(url);
+      if (kept && over(kept.header?.competitions?.[0] ? { status: kept.header.competitions[0].status } : null)) {
+        stats.carried = (stats.carried || 0) + 1;
+        return put(k, url, '', LAST, kept);
+      }
       const data = await get(url);
       if (data && over(data.header?.competitions?.[0] ? { status: data.header.competitions[0].status } : null)) await put(k, url, '', LAST, slim(data));
     })

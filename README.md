@@ -20,13 +20,33 @@ folder, `../Shared-Proxy/kit` by default).
 Copies of the reads Orbit Sports and Quadra Play would ask the data proxy
 for (`mirror.mjs`): a day's and a month's games, finished box scores, every
 league's tables, teams, squads and players' season numbers, players' pages,
-F1's results and official pages, Asia's baseball months. Each is good until
+F1's results and official pages, Asia's baseball months. A finished game's
+box score is carried over from the last published site, not asked of ESPN
+again. Each is good until
 the first moment it could change (a team's next game, a day's first
 kickoff) and never past the next build; the shared kit's `proxyJson` reads
 it when `mirror/index.json` says it's held, at the kit's `mirrorPath(url)`.
 
 Locally: `node mirror.mjs` after `node sports.mjs` (`MIRROR_MINUTES`: time
 for players' pages, 25 by default; `MIRROR_MB`: room, 450 MB by default).
+
+## Win probability (every night, kept for good)
+
+A finished game's win probability line where ESPN draws none (soccer, CPBL,
+an MLB game ESPN left without one): Polymarket's market on it, read once by
+`winprob.mjs` and committed here (`winprob/`), never read again. Orbit Sports
+reads a past game's line from here; one on now from Polymarket through the
+proxy. The matching is Orbit Sports' `public/lib/winprob.mjs` (checked out
+beside the kit by the workflow).
+
+- `https://jaypengx.github.io/Shared-Data/winprob/<league>/<game>.json`:
+  `{ source, market, points: [{ t, home, draw? }] }`, or `{ none }` (ESPN
+  draws its own, or Polymarket had no market). ESPN's games by their id,
+  CPBL's by the day and the home side (`2026-09-27-lions`).
+
+Locally: `node winprob.mjs` after `node sports.mjs` (`WINPROB_DAYS`: how far
+back, 4 by default; `SPORTS_LIB`: Orbit Sports' `public/lib`,
+`../Orbit-Sports/public/lib` by default).
 
 ## Buses (Mondays)
 

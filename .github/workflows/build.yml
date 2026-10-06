@@ -5,7 +5,9 @@
 # bus packs are carried over as published (carry.mjs): a Pages deploy
 # replaces the whole site. Run workflow builds it at once (tick "buses" to
 # rebuild those too). Then the mirror (mirror.mjs): copies of the reads
-# Sports and Play would ask the proxy for, each good until it could change. The buses need the repo secrets TDX_CLIENT_ID and
+# Sports and Play would ask the proxy for, each good until it could change;
+# before it, past games' win probability (winprob.mjs), read once and kept
+# in this repo for good. The buses need the repo secrets TDX_CLIENT_ID and
 # TDX_CLIENT_SECRET.
 name: Build
 on:
@@ -45,6 +47,14 @@ jobs:
             asia-baseball.js
             f1-live.js
           sparse-checkout-cone-mode: false
+      # Orbit Sports' win probability (the matching shared with the app, winprob.mjs).
+      - uses: actions/checkout@v4
+        with:
+          repository: JayPengX/Orbit-Sports
+          path: sports-app
+          sparse-checkout: |
+            public/lib/winprob.mjs
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -66,6 +76,22 @@ jobs:
         run: node sports.mjs
         env:
           KIT: shared/kit
+      # Past games' win probability, kept for good (winprob.mjs): only the
+      # games over since the last night are read, committed here and published.
+      - name: Win probability
+        run: |
+          node winprob.mjs
+          if [ -n "$(git status --porcelain winprob)" ]; then
+            git config user.name "shared-data-bot"
+            git config user.email "actions@users.noreply.github.com"
+            git add winprob
+            git commit -q -m "Win probability: the games over by $(date -u +%F)"
+            for i in 1 2 3; do git pull -q --rebase origin main && git push -q && break; sleep 5; done
+          fi
+          cp -r winprob site/
+        env:
+          KIT: shared/kit
+          SPORTS_LIB: sports-app/public/lib
       # The mirror: copies of the reads the apps would ask the proxy for (mirror.mjs).
       - name: Mirror
         run: node mirror.mjs
