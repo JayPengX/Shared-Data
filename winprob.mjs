@@ -155,6 +155,9 @@ async function league(key, l, games) {
   return season;
 }
 
+// What a race's turns hold (2: the safety car's cause too); one kept with less is read again once.
+const TURNS = 2;
+
 // ---- F1: each race's chances by lap (OpenF1's laps once it has them) ----
 // Kept: this year's races; until this year's first, last year's too (the
 // app shows the last season then).
@@ -169,11 +172,11 @@ async function f1(games) {
     const t = Date.parse(r.date_start);
     const k = raceKey(r.date_start);
     const kept = games.get(k);
-    // A race kept before its turns were (the safety car, stops, leads): those alone, once.
-    if (keep(t) && kept?.by === 'lap' && !kept.b) {
+    // A race kept before its turns were as now (the safety car and its cause, stops, leads): those alone, once.
+    if (keep(t) && kept?.by === 'lap' && kept.bv !== TURNS) {
       const laps = await raceLaps(r.date_start, read).catch(() => null);
       const ev = laps && (await raceEvents(r.date_start, read, laps, kept.d).catch(() => null));
-      if (ev) Object.assign(kept, { b: ev.bands, e: ev.events }), stats.lines++;
+      if (ev) Object.assign(kept, { b: ev.bands, e: ev.events, bv: TURNS }), stats.lines++;
       continue;
     }
     if (!keep(t) || kept || t > NOW - 4 * HOUR || r.is_cancelled) continue;
@@ -185,7 +188,7 @@ async function f1(games) {
     }
     const line = await raceLine(r.date_start, read, laps).catch(() => null);
     if (line && laps) Object.assign(line, (await raceEvents(r.date_start, read, laps, line.drivers).catch(() => null)) || {});
-    if (line) stats.lines++, games.set(k, { t, ...packRace(line) });
+    if (line) stats.lines++, games.set(k, { t, ...packRace(line), ...(line.bands ? { bv: TURNS } : {}) });
     else if (NOW - t > GIVE_UP) stats.none++, games.set(k, { t, none: 'polymarket' });
     else stats.later++;
   }
