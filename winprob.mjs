@@ -187,7 +187,9 @@ async function f1(games) {
   for (const r of races) {
     const t = Date.parse(r.date_start);
     const k = raceKey(r.date_start);
-    const kept = games.get(k);
+    let kept = games.get(k);
+    // Marked without a market before older races' markets were read whole: looked for again, once.
+    if (kept?.none && kept.nv !== TURNS) games.delete(k), (kept = undefined);
     // A race kept before its turns were as now (the safety car and its cause, stops, leads): those alone, once.
     if (keep(t) && kept?.by === 'lap' && kept.bv !== TURNS) {
       const laps = await raceLaps(r.date_start, read).catch(() => null);
@@ -205,7 +207,7 @@ async function f1(games) {
     const line = await raceLine(r.date_start, read, laps).catch(() => null);
     if (line && laps) Object.assign(line, (await raceEvents(r.date_start, read, laps, line.drivers).catch(() => null)) || {});
     if (line) stats.lines++, games.set(k, { t, ...packRace(line), ...(line.bands ? { bv: TURNS } : {}) });
-    else if (NOW - t > GIVE_UP) stats.none++, games.set(k, { t, none: 'polymarket' });
+    else if (NOW - t > GIVE_UP) stats.none++, games.set(k, { t, none: 'polymarket', nv: TURNS });
     else stats.later++;
   }
   for (const [k, v] of games) if (!keep(v.t)) games.delete(k), stats.dropped++;
