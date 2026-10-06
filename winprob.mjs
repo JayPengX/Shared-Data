@@ -157,6 +157,9 @@ async function league(key, l, games) {
 
 // What a race's turns hold (5: the safety car's cause, every read answered, who led away, red flags only said, the chequered flag not one, a market found on its day, whoever led); one kept with less is read again once.
 const TURNS = 8;
+// How a race's line is drawn (2: its drivers by the chance drawn, not a stray trade; every driver read where the
+// market's volume is gone; F1's own market, never IndyCar's on the same day); one kept as before is read again once.
+const LINE = 2;
 
 // ---- F1: each race's chances by lap (OpenF1's laps once it has them) ----
 // Kept: this year's races; until this year's first, last year's too (the
@@ -190,6 +193,17 @@ async function f1(games) {
     let kept = games.get(k);
     // Marked without a market before older races' markets were read whole: looked for again, once.
     if (kept?.none && kept.nv !== TURNS) games.delete(k), (kept = undefined);
+    // A race's line kept as before (China with Leclerc alone): read again whole, once; kept as it was if that fails.
+    if (keep(t) && kept?.by === 'lap' && kept.lv !== LINE) {
+      const laps = await raceLaps(r.date_start, read).catch(() => null);
+      const line = laps && (await raceLine(r.date_start, read, laps).catch(() => null));
+      const ev = line && (await raceEvents(r.date_start, read, laps, line.drivers).catch(() => null));
+      if (ev) {
+        games.set(k, { t, ...packRace(Object.assign(line, ev)), bv: TURNS, lv: LINE });
+        stats.lines++;
+      }
+      continue;
+    }
     // A race kept before its turns were as now (the safety car and its cause, stops, leads): those alone, once.
     if (keep(t) && kept?.by === 'lap' && kept.bv !== TURNS) {
       const laps = await raceLaps(r.date_start, read).catch(() => null);
@@ -206,7 +220,7 @@ async function f1(games) {
     }
     const line = await raceLine(r.date_start, read, laps).catch(() => null);
     if (line && laps) Object.assign(line, (await raceEvents(r.date_start, read, laps, line.drivers).catch(() => null)) || {});
-    if (line) stats.lines++, games.set(k, { t, ...packRace(line), ...(line.bands ? { bv: TURNS } : {}) });
+    if (line) stats.lines++, games.set(k, { t, ...packRace(line), ...(line.bands ? { bv: TURNS } : {}), lv: LINE });
     else if (NOW - t > GIVE_UP) stats.none++, games.set(k, { t, none: 'polymarket', nv: TURNS });
     else stats.later++;
   }
