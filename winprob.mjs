@@ -167,7 +167,23 @@ async function f1(games) {
   for (const y of [year - 1, year]) races.push(...((await get(`https://api.openf1.org/v1/sessions?year=${y}&session_name=Race`).catch(() => null)) || []));
   const started = races.some(r => new Date(r.date_start).getUTCFullYear() === year && Date.parse(r.date_start) < NOW);
   const keep = t => new Date(t).getUTCFullYear() === year || (!started && new Date(t).getUTCFullYear() === year - 1);
-  const read = (url, { trim = '' }) => get(url, { trim });
+  // OpenF1 lets some 30 reads a minute: its reads two seconds apart, the same one never twice.
+  const seen = new Map();
+  let next = 0;
+  const read = (url, { trim = '' }) => {
+    if (!url.startsWith('https://api.openf1.org/')) return get(url, { trim });
+    if (!seen.has(url))
+      seen.set(
+        url,
+        (async () => {
+          const wait = Math.max(0, next - Date.now());
+          next = Math.max(next, Date.now()) + 2100;
+          await new Promise(r => setTimeout(r, wait));
+          return get(url);
+        })()
+      );
+    return seen.get(url);
+  };
   for (const r of races) {
     const t = Date.parse(r.date_start);
     const k = raceKey(r.date_start);
