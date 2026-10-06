@@ -62,6 +62,17 @@ Only what an app shows, and what's over is read once:
 - last season's tables all year (Play's prices weigh them); last season's
   players' numbers only while this one is young (Play's YOUNG_GAMES)
 
+And of what's current, only what an app reads, and as published while it
+can't have changed:
+
+- a team's page and games, its plain squad and its players' pages only for
+  Sports' leagues (Orbit Sports' `broadcast.mjs`); Play's leagues get their
+  tables, trimmed squads, numbers, days, months and box scores
+- a team quiet since the last build (no game since): its squad, page and
+  players' pages as published, each still read again every few nights (a
+  squad every third, a player's page every seventh, spread over the nights)
+- a month over: as published
+
 ## Buses (Mondays)
 
 Taiwan's bus routes and timetables from [TDX](https://tdx.transportdata.tw),

@@ -47,13 +47,16 @@ jobs:
             asia-baseball.js
             f1-live.js
           sparse-checkout-cone-mode: false
-      # Orbit Sports' win probability (the matching shared with the app, winprob.mjs).
+      # Orbit Sports' win probability (the matching shared with the app,
+      # winprob.mjs) and its leagues (broadcast.mjs: what the mirror makes
+      # Sports' own reads for).
       - uses: actions/checkout@v4
         with:
           repository: JayPengX/Orbit-Sports
           path: sports-app
           sparse-checkout: |
             public/lib/winprob.mjs
+            public/lib/broadcast.mjs
           sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v4
         with:
@@ -88,6 +91,7 @@ jobs:
         run: node mirror.mjs
         env:
           KIT: shared/kit
+          SPORTS_LIB: sports-app/public/lib
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

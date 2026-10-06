@@ -37,6 +37,15 @@ const { mirrorPath } = await kitFile('quadra.mjs');
 const { F1_TEAMS, F1_PAGE } = await kitFile('logos.mjs');
 const { trimEspnRoster, trimEspnAthletes, trimF1Page } = await import(pathToFileURL(`${ROOT}/sports-proxy-worker.js`).href);
 const { asiaBaseballResponse } = await import(pathToFileURL(`${ROOT}/asia-baseball.js`).href);
+// Orbit Sports' leagues (its broadcast list: what it shows). Its own reads
+// (a team's page and games, the plain squad, players' pages) are made for
+// these only; every league is Play's (its tables, squads trimmed, numbers,
+// days, months, box scores). Without the file, every league as Sports'.
+const SPORTS_LIB = resolve(process.env.SPORTS_LIB || '../Orbit-Sports/public/lib');
+const SPORTS = await import(pathToFileURL(`${SPORTS_LIB}/broadcast.mjs`).href)
+  .then(m => new Set(Object.keys(m.BROADCAST)))
+  .catch(() => null);
+const forSports = key => !SPORTS || SPORTS.has(key);
 
 const SITE = 'https://site.api.espn.com/apis/site/v2/sports';
 const STANDINGS = 'https://site.api.espn.com/apis/v2/sports';
@@ -82,7 +91,7 @@ async function slot(fn) {
     waiting.shift()?.();
   }
 }
-const stats = { asked: 0, failed: 0, written: 0, bytes: 0, kinds: {} };
+export const stats = { asked: 0, failed: 0, written: 0, bytes: 0, kinds: {} };
 function get(url, { text = false } = {}) {
   return slot(async () => {
     for (let attempt = 0; ; attempt++) {
@@ -142,10 +151,11 @@ function nextOf(events) {
 // and each league's teams that play in it this season (a league's list of
 // teams has every one ESPN knows: college football's hundreds).
 const teamNext = new Map();
+const teamLast = new Map();
 const teamSeen = new Map();
 const leagueNext = new Map();
 const teamKey = (espn, id) => `${espn.startsWith('soccer/') ? 'soccer' : espn}:${id}`;
-async function readSeasons() {
+export async function readSeasons() {
   const year = new Date().getUTCFullYear();
   for (const [key, l] of Object.entries(CATALOG)) {
     if (l.data !== 'espn' || !l.espn) continue;
@@ -160,6 +170,11 @@ async function readSeasons() {
       const seen = teamSeen.get(key) || teamSeen.set(key, new Set()).get(key);
       for (const e of pack.events || []) {
         for (const c of e.competitions?.[0]?.competitors || []) seen.add(String(c.id ?? c.team?.id));
+        if (startOf(e) && startOf(e) <= NOW)
+          for (const c of e.competitions?.[0]?.competitors || []) {
+            const k = teamKey(l.espn, c.id ?? c.team?.id);
+            teamLast.set(k, Math.max(teamLast.get(k) ?? 0, startOf(e)));
+          }
         if (over(e) || !startOf(e)) continue;
         next = Math.min(next, startOf(e));
         for (const c of e.competitions?.[0]?.competitors || []) {
@@ -198,6 +213,26 @@ function published(url, trim = '') {
   });
 }
 const allOver = data => (data?.events || []).every(over);
+// A team quiet since the last build (its last game started before that
+// build's read less 5 hours: over by then): its squad, page and players'
+// pages are as published. Each is still read again every few nights (a
+// signing, a trade, an injury list), the teams spread over the nights.
+export let lastBuilt = 0;
+export const setLastBuilt = t => (lastBuilt = t);
+const nightNo = Math.floor(NOW / 86_400_000);
+const stagger = (id, every) => [...String(id)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % every === nightNo % every;
+const quiet = (espn, id) => lastBuilt > 0 && (teamLast.get(teamKey(espn, id)) ?? 0) < lastBuilt - 5 * HOUR;
+const carry = kindName => {
+  const c = (stats.carriedKinds ||= {});
+  c[kindName] = (c[kindName] || 0) + 1;
+};
+// The published copy of `url` (with `trim`) put again, or null when there is none.
+async function carried(kindName, url, trim, until) {
+  const kept = await published(url, trim);
+  if (kept == null) return null;
+  if (await put(kindName, url, trim, until, kept)) carry(kindName);
+  return kept;
+}
 async function dayPages(key, l) {
   const k = kind('days', /^!https:\/\/site\.api\.espn\.com\/apis\/site\/v2\/sports\/[a-z0-9._-]+\/[a-z0-9._-]+\/scoreboard\?dates=\d{8}(&limit=200)?$/);
   await Promise.all(
@@ -221,7 +256,9 @@ async function monthPages(key, l) {
   await Promise.all(
     months().flatMap(m =>
       [`${SITE}/${l.espn}/scoreboard?dates=${m}`, `${SITE}/${l.espn}/scoreboard?dates=${m}&limit=1000`].map(async url => {
-        const data = await get(url);
+        // A month over (every game in it): as published.
+        const kept = m < taiwanDay(NOW).slice(0, 6) ? await published(url) : null;
+        const data = kept && allOver(kept) ? (carry(k), kept) : await get(url);
         if (data) await put(k, url, '', nextOf(data.events), slim(data));
       })
     )
@@ -351,7 +388,7 @@ export function youngSeason(pages) {
 }
 // A league's teams, each team's page, games and squad; its players for later.
 const players = []; // [[league espn, athlete id, until]…] per league, for the round after
-async function teams(key, l) {
+export async function teams(key, l) {
   const kTeams = kind('teams', /^!https:\/\/site\.api\.espn\.com\/apis\/site\/v2\/sports\/[a-z0-9._-]+\/[a-z0-9._-]+\/teams\?limit=1000$/);
   const kTeam = kind('team', /^!https:\/\/site\.api\.espn\.com\/apis\/site\/v2\/sports\/[a-z0-9._-]+\/[a-z0-9._-]+\/teams\/\d+(\/schedule(\?(seasontype=2|fixture=true))?)?$/);
   const kSquad = kind('squads', /^(espn-roster)?!https:\/\/site\.api\.espn\.com\/apis\/site\/v2\/sports\/[a-z0-9._-]+\/[a-z0-9._-]+\/teams\/\d+\/roster$/);
@@ -363,13 +400,34 @@ async function teams(key, l) {
   const soccer = l.espn.startsWith('soccer/');
   const club = soccer ? 'soccer/all' : l.espn;
   const mine = [];
+  const sports = forSports(key);
   await Promise.all(
     ids.map(async id => {
       if (untilTeam(l.espn, id) <= Date.now() + 10 * 60_000) return;
       const page = `${SITE}/${club}/teams/${id}`;
       const sched = `${SITE}/${club}/teams/${id}/schedule`;
       const squad = `${SITE}/${l.espn}/teams/${id}/roster`;
-      const [p, s, r, f] = await Promise.all([written.has(`!${page}`) ? null : get(page), written.has(`!${sched}`) ? null : get(sched), get(squad), soccer && !written.has(`!${sched}?fixture=true`) ? get(`${sched}?fixture=true`) : null]);
+      const still = quiet(l.espn, id) && !stagger(id, 3);
+      // Play's squad (trimmed), and Sports' plain one: as published while the team's quiet.
+      const squadUntil = untilTeam(l.espn, id);
+      let r = null;
+      if (still) {
+        const t = await carried(kSquad, squad, 'espn-roster', squadUntil);
+        r = sports ? await carried(kSquad, squad, '', squadUntil) : t;
+        if (!t || !r) r = null;
+      }
+      const fresh = !r;
+      if (fresh) r = await get(squad);
+      if (!sports) {
+        if (r && fresh) await put(kSquad, squad, 'espn-roster', squadUntil, trimEspnRoster(r));
+        return;
+      }
+      // Sports' own: the team's page (as published while quiet) and its games (always read: a kickoff moved).
+      const [p, s, f] = await Promise.all([
+        written.has(`!${page}`) ? null : still ? published(page).then(x => x ?? get(page)) : get(page),
+        written.has(`!${sched}`) ? null : get(sched),
+        soccer && !written.has(`!${sched}?fixture=true`) ? get(`${sched}?fixture=true`) : null
+      ]);
       // Its next game in any competition (a cup no app follows too): from its own games.
       const until = Math.min(untilTeam(l.espn, id), nextOf(s?.events), nextOf(f?.events), ...(p?.team?.nextEvent || []).map(e => (over(e) ? LAST : Date.parse(e.date) || LAST)));
       if (p) await put(kTeam, page, '', until, slim(p));
@@ -380,16 +438,20 @@ async function teams(key, l) {
         if (reg) await put(kTeam, `${sched}?seasontype=2`, '', until, slim(reg));
       }
       if (r) {
-        await put(kSquad, squad, '', until, slim(r));
-        await put(kSquad, squad, 'espn-roster', until, trimEspnRoster(r));
-        for (const a of (r.athletes || []).flatMap(x => (Array.isArray(x?.items) ? x.items : [x]))) if (a?.id) mine.push([l.espn, String(a.id), until]);
+        if (fresh) {
+          await put(kSquad, squad, '', until, slim(r));
+          await put(kSquad, squad, 'espn-roster', until, trimEspnRoster(r));
+        }
+        // Players' pages: as published while the team's quiet (each still read a night in seven).
+        const team = quiet(l.espn, id);
+        for (const a of (r.athletes || []).flatMap(x => (Array.isArray(x?.items) ? x.items : [x]))) if (a?.id) mine.push([l.espn, String(a.id), until, team && !stagger(a.id, 7)]);
       }
     })
   );
   players.push(mine);
 }
 // Players' pages: every league's in turn, until the time for them runs out.
-async function playerPages() {
+export async function playerPages() {
   const kBio = kind('players', /^!https:\/\/site\.api\.espn\.com\/apis\/common\/v3\/sports\/[a-z0-9._-]+\/[a-z0-9._-]+\/athletes\/\d+(\/overview)?$/);
   const turns = [];
   for (let i = 0; players.some(list => i < list.length); i++) for (const list of players) if (list[i]) turns.push(list[i]);
@@ -397,9 +459,13 @@ async function playerPages() {
   await Promise.all(
     Array.from({ length: AT_ONCE }, async () => {
       for (let item; (item = turns.shift()) && Date.now() < PLAYERS_BY && stats.bytes < ROOM; ) {
-        const [espn, id, until] = item;
+        const [espn, id, until, still] = item;
         const bio = `${COMMON}/${espn}/athletes/${id}`;
         if (written.has(`!${bio}`)) continue;
+        if (still && (await carried(kBio, bio, '', until)) && (await carried(kBio, `${bio}/overview`, '', until))) {
+          done++;
+          continue;
+        }
         const [a, o] = await Promise.all([get(bio), get(`${bio}/overview`)]);
         if (a) await put(kBio, bio, '', until, slim(a, ['athlete']));
         if (o) await put(kBio, `${bio}/overview`, '', until, slim(o, ['statistics', 'gameLog', 'rotowire', 'awards', 'seasonRankings', 'nextGame']));
@@ -475,6 +541,8 @@ async function leaguePhotos() {
 }
 
 async function main() {
+  // When the published copies were read (none: everything read afresh).
+  lastBuilt = Number((await fetch(`${PUBLISHED}mirror/index.json`, { signal: AbortSignal.timeout(15_000) }).then(r => (r.ok ? r.json() : null)).catch(() => null))?.built) || 0;
   await readSeasons();
   await leaguePhotos();
   const t0 = Date.now();
@@ -497,6 +565,7 @@ async function main() {
   await mkdir('site/mirror', { recursive: true });
   await writeFile('site/mirror/index.json', JSON.stringify(index));
   console.log(`mirror: ${stats.written} copies, ${(stats.bytes / 1e6).toFixed(1)} MB; ${stats.asked} asked, ${stats.failed} failed; ${((Date.now() - NOW) / 60_000).toFixed(1)} min`);
+  console.log(`  carried as published: ${JSON.stringify({ days: stats.carried || 0, ...(stats.carriedKinds || {}) })}`);
   for (const [name, v] of Object.entries(stats.kinds)) console.log(`  ${name}: ${v.files} files, ${(v.bytes / 1e6).toFixed(1)} MB`);
   // Most of it unread: something's wrong (ESPN down); the build fails and the last site stays.
   if (stats.written < 100) process.exit(1);
