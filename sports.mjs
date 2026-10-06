@@ -104,6 +104,20 @@ async function leagueYear(espn, year, old = null) {
   return { leagues: slim((head.leagues || []).slice(0, 1)), events, carried, read: Math.max(0, 13 - from) };
 }
 
+// This season's game days as Taipei dates ('YYYY-MM-DD'), from its start
+// (ESPN's season start; unknown: every day given); a game called off left out.
+export function seasonDays(events, start = NaN) {
+  const from = Number.isFinite(start) ? start - DAY : -Infinity;
+  const days = new Set();
+  for (const e of events) {
+    const t = Date.parse(e.date || '');
+    const state = e.status?.type || e.competitions?.[0]?.status?.type || {};
+    if (!Number.isFinite(t) || t < from || /postponed|canceled|cancelled|abandoned/i.test(state.name || state.description || '')) continue;
+    days.add(new Date(t + 8 * 3_600_000).toISOString().slice(0, 10));
+  }
+  return [...days].sort();
+}
+
 async function main() {
   const leagues = Object.entries(CATALOG).filter(([key, l]) => l.data === 'espn' && l.espn && (!only.length || only.includes(key)));
   const index = { built: new Date().toISOString(), leagues: {} };
@@ -115,6 +129,7 @@ async function main() {
       for (let item; (item = queue.shift()); ) {
         const [key, l] = item;
         const entry = (index.leagues[key] = { espn: l.espn, years: {} });
+        const all = [];
         const start = Date.parse((await page(`${SITE}/${l.espn}/scoreboard?limit=1`).catch(() => null))?.leagues?.[0]?.season?.startDate || '');
         for (const year of yearsAt(new Date(), start)) {
           try {
@@ -123,12 +138,17 @@ async function main() {
             await mkdir(`site/sports/${key}`, { recursive: true });
             await writeFile(`site/sports/${key}/${year}.json`, text);
             entry.years[year] = { events: pack.events.length, bytes: text.length };
+            all.push(...pack.events);
             console.log(`${key} ${year}: ${pack.events.length} events (${carried} carried, ${read} months read), ${(text.length / 1e6).toFixed(2)} MB`);
           } catch (error) {
             failed.push(`${key} ${year}`);
             console.log(`${key} ${year}: left out (${error.message})`);
           }
         }
+        // The season's game days, small, for the apps' date strips (the year
+        // packs are calendar years, a few MB each: a season over two of them).
+        const days = seasonDays(all, start);
+        if (days.length) await writeFile(`site/sports/${key}/days.json`, JSON.stringify({ built: index.built, start: Number.isFinite(start) ? new Date(start).toISOString() : null, days }));
       }
     })
   );
