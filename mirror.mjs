@@ -535,9 +535,33 @@ async function leaguePhotos() {
   const html = await get('https://www.nba.com/players', { text: true });
   const players = [...String(html || '').matchAll(/"PERSON_ID":(\d+),"PLAYER_LAST_NAME":"([^"]*)","PLAYER_FIRST_NAME":"([^"]*)"/g)].map(([, id, last, first]) => [`${first} ${last}`.trim(), Number(id)]);
   if (players.length < 300) return console.log(`nba photos: left out (${players.length} players)`);
+  // NBA.com answers a player it has no photo of with its grey silhouette (a
+  // 200, not a 404), so the app would never fall back to their initials or
+  // look further: those players are left out of the list.
+  const tag = async id => (await fetch(NBA_PHOTO(id), { method: 'HEAD', signal: AbortSignal.timeout(15_000) }).catch(() => null))?.headers.get('etag') || '';
+  const silhouette = await tag('fallback');
+  if (!silhouette) return console.log('nba photos: left out (no silhouette to compare)');
+  const kept = await withPhotos(players, tag, silhouette);
+  if (kept.length < 300) return console.log(`nba photos: left out (${kept.length} with photos)`);
   await mkdir('site/sports/nba', { recursive: true });
-  await writeFile('site/sports/nba/photos.json', JSON.stringify({ built: NOW, players }));
-  console.log(`nba photos: ${players.length} players`);
+  await writeFile('site/sports/nba/photos.json', JSON.stringify({ built: NOW, players: kept }));
+  console.log(`nba photos: ${kept.length} of ${players.length} players have one`);
+}
+const NBA_PHOTO = id => `https://cdn.nba.com/headshots/nba/latest/260x190/${id}.png`;
+// The players whose photo isn't the silhouette. A failed read (no tag) keeps
+// the player: a photo that may be there isn't dropped for a failed read.
+export async function withPhotos(players, tag, silhouette, at = 16) {
+  const out = new Array(players.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: at }, async () => {
+      while (next < players.length) {
+        const i = next++;
+        out[i] = (await tag(players[i][1])) !== silhouette;
+      }
+    })
+  );
+  return players.filter((_, i) => out[i]);
 }
 
 async function main() {
