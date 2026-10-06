@@ -1,4 +1,5 @@
-# Every night at midnight Taiwan time (16:00 UTC): every league's season for
+# Every night just after midnight Taiwan time (16:23 UTC: GitHub starts
+# scheduled runs on the hour hours late, its busiest minute): every league's season for
 # Orbit Sports and Quadra Play (sports.mjs), and on Mondays Taiwan's bus
 # routes and timetables from TDX (build.mjs; timetables change rarely, and
 # holidays come with their own days in them). The other nights the week's
@@ -14,7 +15,7 @@
 name: Build
 on:
   schedule:
-    - cron: '0 16 * * *'
+    - cron: '23 16 * * *'
   workflow_dispatch:
     inputs:
       part:
@@ -83,7 +84,7 @@ jobs:
           echo "restored $(find site -type f | wc -l) files from run $id"
         env:
           GH_TOKEN: ${{ github.token }}
-      # Monday in Taiwan (Sunday 16:00 UTC), or asked for: the buses anew.
+      # Monday in Taiwan (Sunday from 16:00 UTC), or asked for: the buses anew.
       - name: Buses
         if: env.FULL == 'true' || inputs.buses
         run: |

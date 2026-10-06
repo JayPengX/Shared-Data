@@ -25,6 +25,9 @@
 //
 // → site/mirror/<trim or _>/<host><path>[/<query>].json ({ until, data }) at
 // the kit's mirrorPath; site/mirror/index.json ({ built, until, match, counts }).
+// Beside them, players' photo lists for the kit's photos.mjs:
+// site/sports/<league>/photos.json (NBA.com's, the Premier League's own) and
+// faces.json (FotMob's, every football league and cup).
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -387,6 +390,8 @@ export function youngSeason(pages) {
   return (gps[Math.min(gps.length - 1, 30)] ?? 0) < 15;
 }
 // A league's teams, each team's page, games and squad; its players for later.
+// Each club's names as ESPN has them ('<league>:<team id>' → [names]), for FotMob's faces.
+export const espnSquads = new Map();
 const players = []; // [[league espn, athlete id, until]…] per league, for the round after
 export async function teams(key, l) {
   const kTeams = kind('teams', /^!https:\/\/site\.api\.espn\.com\/apis\/site\/v2\/sports\/[a-z0-9._-]+\/[a-z0-9._-]+\/teams\?limit=1000$/);
@@ -418,6 +423,7 @@ export async function teams(key, l) {
       }
       const fresh = !r;
       if (fresh) r = await get(squad);
+      if (r) espnSquads.set(`${key}:${id}`, (r.athletes || []).flatMap(x => (Array.isArray(x?.items) ? x.items : [x])).map(a => a?.displayName).filter(Boolean));
       if (!sports) {
         if (r && fresh) await put(kSquad, squad, 'espn-roster', squadUntil, trimEspnRoster(r));
         return;
@@ -534,15 +540,15 @@ async function asia() {
 async function leaguePhotos() {
   const html = await get('https://www.nba.com/players', { text: true });
   const players = [...String(html || '').matchAll(/"PERSON_ID":(\d+),"PLAYER_LAST_NAME":"([^"]*)","PLAYER_FIRST_NAME":"([^"]*)"/g)].map(([, id, last, first]) => [`${first} ${last}`.trim(), Number(id)]);
-  if (players.length < 300) return console.log(`nba photos: left out (${players.length} players)`);
+  if (players.length < 300) return console.log(`nba photos: left out (${players.length} players)${(await carryPublished('sports/nba/photos.json')) ? ', carried' : ''}`);
   // NBA.com answers a player it has no photo of with its grey silhouette (a
   // 200, not a 404), so the app would never fall back to their initials or
   // look further: those players are left out of the list.
   const tag = async id => (await fetch(NBA_PHOTO(id), { method: 'HEAD', signal: AbortSignal.timeout(15_000) }).catch(() => null))?.headers.get('etag') || '';
   const silhouette = await tag('fallback');
-  if (!silhouette) return console.log('nba photos: left out (no silhouette to compare)');
+  if (!silhouette) return console.log(`nba photos: left out (no silhouette to compare)${(await carryPublished('sports/nba/photos.json')) ? ', carried' : ''}`);
   const kept = await withPhotos(players, tag, silhouette);
-  if (kept.length < 300) return console.log(`nba photos: left out (${kept.length} with photos)`);
+  if (kept.length < 300) return console.log(`nba photos: left out (${kept.length} with photos)${(await carryPublished('sports/nba/photos.json')) ? ', carried' : ''}`);
   await mkdir('site/sports/nba', { recursive: true });
   await writeFile('site/sports/nba/photos.json', JSON.stringify({ built: NOW, players: kept }));
   console.log(`nba photos: ${kept.length} of ${players.length} players have one`);
@@ -589,12 +595,12 @@ async function plJson(path) {
 }
 export async function plPhotos() {
   const season = (await plJson('/competitions/1/compseasons?page=0&pageSize=1'))?.content?.[0]?.id;
-  if (!season) return console.log('epl photos: left out (no season)');
+  if (!season) return console.log(`epl photos: left out (no season)${(await carryPublished('sports/epl/photos.json')) ? ', carried' : ''}`);
   // Each club's squad this season (the league's paged list of players stops short of its own count).
   const teams = (await plJson(`/teams?pageSize=40&compSeasons=${season}&comps=1&page=0`))?.content || [];
-  if (teams.length < 18) return console.log(`epl photos: left out (${teams.length} clubs)`);
+  if (teams.length < 18) return console.log(`epl photos: left out (${teams.length} clubs)${(await carryPublished('sports/epl/photos.json')) ? ', carried' : ''}`);
   const squads = await Promise.all(teams.map(t => plJson(`/teams/${Number(t.id)}/compseasons/${season}/staff?pageSize=100&altIds=true&type=player`)));
-  if (squads.some(x => !x?.players)) return console.log('epl photos: left out (a squad failed)');
+  if (squads.some(x => !x?.players)) return console.log(`epl photos: left out (a squad failed)${(await carryPublished('sports/epl/photos.json')) ? ', carried' : ''}`);
   const all = squads.flatMap((x, i) => x.players.map(p => ({ ...p, currentTeam: { name: teams[i].name } })));
   const named = plNames(all, new Set(teams.map(t => t.name)));
   const ids = [...new Set(named.map(([, id]) => id))];
@@ -612,11 +618,219 @@ export async function plPhotos() {
     })
   );
   const players = named.filter(([, id]) => where.get(id)).map(([name, id]) => (where.get(id) === 'o' ? [name, id, 'o'] : [name, id]));
-  if (ids.length < 400) return console.log(`epl photos: left out (${ids.length} players)`);
+  if (ids.length < 400) return console.log(`epl photos: left out (${ids.length} players)${(await carryPublished('sports/epl/photos.json')) ? ', carried' : ''}`);
   await mkdir('site/sports/epl', { recursive: true });
   await writeFile('site/sports/epl/photos.json', JSON.stringify({ built: NOW, players }));
   console.log(`epl photos: ${[...where.values()].filter(Boolean).length} of ${ids.length} players have one`);
 }
+// Every other football league's and cup's photos, from FotMob (the leagues'
+// own sites have no list to read, and ESPN none for footballers): each club's
+// squad as FotMob has it now, a studio cutout per player at FotMob's id.
+// → sports/<league>/faces.json ([[name, id]…]). Gently: one club once a night
+// (a club in three competitions asked once), three at a time with a pause
+// between, and on FotMob's "too many" a minute's wait, a second one stops it
+// asking; a list it couldn't make is carried over as last published.
+export const FOTMOB = 'https://www.fotmob.com/api/data';
+export const FOTMOB_PHOTO = id => `https://images.fotmob.com/image_resources/playerimages/${id}.png`;
+// Orbit's leagues → FotMob's (the Nations League's A to D; a key in place
+// of an id: a cup made of those leagues' clubs).
+export const FOTMOB_LEAGUES = {
+  epl: [47], laliga: [87], seriea: [55], bundesliga: [54], ligue1: [53], scotland: [64], mls: [130],
+  ucl: [42], uel: [73], uecl: [10216], championship: [48], eredivisie: [57], ligamx: [230],
+  brasileirao: [268], jleague: [223], kleague: [9080], worldcup: [77], nationsleague: [9806, 9807, 9808, 9809],
+  facup: [132]
+};
+export const FOTMOB_PACE = { at: 3, gap: 400, wait: 60_000 };
+// The teams in a league's tables (this season's), or, a cup without one yet, its games'.
+export function fotmobTeams(league) {
+  const found = new Map();
+  const rows = x => {
+    if (Array.isArray(x)) return x.forEach(rows);
+    if (!x || typeof x !== 'object') return;
+    if (x.id && x.name && 'played' in x) found.set(Number(x.id), x.name);
+    else Object.values(x).forEach(rows);
+  };
+  rows(league?.table);
+  if (!found.size)
+    for (const m of league?.fixtures?.allMatches || []) for (const t of [m.home, m.away]) if (t?.id && t.name) found.set(Number(t.id), t.name);
+  return found;
+}
+// As the kit's photos.mjs compares names.
+export const faceKey = n =>
+  String(n || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[øœæßđðłıþ]/g, c => ({ ø: 'o', œ: 'oe', æ: 'ae', ß: 'ss', đ: 'd', ð: 'd', ł: 'l', ı: 'i', þ: 'th' })[c])
+    .replace(/\b(jr|sr|ii|iii)\b\.?/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+// A squad's players (no coach) under each name ESPN may use: FotMob's, with
+// its apostrophes and hyphens dropped (N'Dicka, ESPN's Ndicka), the first
+// and last of a longer one, a two-word one turned round (FotMob's Woo-yeong
+// Jeong, ESPN's Jeong Woo-Yeong). A name two players share: neither (no face is
+// better than a wrong one).
+export function fotmobNames(squads) {
+  const out = [];
+  for (const squad of squads)
+    for (const g of squad?.squad || [])
+      if (g.title !== 'coach')
+        for (const m of g.members || []) {
+          const id = Number(m?.id);
+          const name = String(m?.name || '').trim();
+          if (!id || !name) continue;
+          const words = name.split(/\s+/);
+          const variants = [name, name.replace(/['’‘`-]/g, ''), words.length > 2 ? `${words[0]} ${words.at(-1)}` : '', words.length === 2 ? `${words[1]} ${words[0]}` : ''];
+          for (const v of new Set(variants)) if (v) out.push([v, id]);
+        }
+  const key = faceKey;
+  const ids = new Map();
+  for (const [name, id] of out) ids.set(key(name), (ids.get(key(name)) || new Set()).add(id));
+  const seen = new Set();
+  return out.filter(([name, id]) => ids.get(key(name)).size === 1 && !seen.has(key(name)) && seen.add(key(name)));
+}
+// A player ESPN names otherwise (Pio Esposito, FotMob's Francesco Pio
+// Esposito; Matt, Matthew; Bremer, Gleison Bremer; Laurtaro, Lautaro): looked
+// for in their own club only (the FotMob squad sharing most names with ESPN's),
+// among the players not matched by name, and taken only when one alone fits.
+const editsApart = (a, b) => {
+  let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length];
+};
+export function sameNameish(a, b) {
+  const A = a.split(' ');
+  const B = b.split(' ');
+  if (A.length === 1 || B.length === 1) {
+    const [one, many] = A.length === 1 ? [A[0], B] : [B[0], A];
+    return one.length >= 4 && many.length > 1 && many.includes(one);
+  }
+  const [short, long] = A.length <= B.length ? [A, B] : [B, A];
+  if (short.every(w => long.includes(w))) return true;
+  if (A.at(-1) === B.at(-1) && Math.min(A[0].length, B[0].length) >= 3 && (A[0].startsWith(B[0]) || B[0].startsWith(A[0]))) return true;
+  return Math.min(a.length, b.length) >= 8 && editsApart(a, b) <= 2;
+}
+export function clubMatches(squads, clubs) {
+  const people = squads.map(sq => (sq?.squad || []).filter(g => g.title !== 'coach').flatMap(g => g.members || []).filter(m => m?.id && m?.name).map(m => ({ id: Number(m.id), k: faceKey(m.name) })));
+  const found = [];
+  for (const names of clubs) {
+    const espn = names.map(name => ({ name, k: faceKey(name) }));
+    const keys = new Set(espn.map(x => x.k));
+    let club = null;
+    let most = 2;
+    for (const c of people) {
+      const n = c.filter(p => keys.has(p.k)).length;
+      if (n > most) [club, most] = [c, n];
+    }
+    if (!club) continue;
+    const named = new Set(club.map(p => p.k));
+    const left = club.filter(p => !keys.has(p.k));
+    for (const x of espn) {
+      if (named.has(x.k)) continue;
+      const fits = left.filter(p => sameNameish(x.k, p.k));
+      if (fits.length === 1) found.push([x.name, fits[0].id]);
+    }
+  }
+  // One FotMob player two ESPN names fit: neither.
+  const count = new Map();
+  for (const [, id] of found) count.set(id, (count.get(id) || 0) + 1);
+  return found.filter(([, id]) => count.get(id) === 1);
+}
+export function fotmobReader(fetchJson, pace = FOTMOB_PACE, sleep = ms => new Promise(r => setTimeout(r, ms))) {
+  let turn = Promise.resolve();
+  let limited = 0;
+  const asked = { n: 0 };
+  // One request at a time leaves each `gap` apart (the three readers share it).
+  const read = async path => {
+    for (let tries = 0; tries < 3 && limited < 2; tries++) {
+      const go = turn.then(() => sleep(pace.gap));
+      turn = go;
+      await go;
+      asked.n++;
+      const r = await fetchJson(`${FOTMOB}${path}`).catch(() => ({ status: 0 }));
+      if (r.status === 200) return r.data;
+      if (r.status === 404) return null;
+      if (r.status === 429 && ++limited < 2) await sleep(pace.wait);
+    }
+    throw new Error(limited >= 2 ? 'fotmob: too many' : `fotmob: ${path} failed`);
+  };
+  return { read, asked, stopped: () => limited >= 2 };
+}
+async function fotmobJson(url) {
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (orbit-mirror)' }, signal: AbortSignal.timeout(30_000) });
+  return { status: res.status, data: res.ok ? await res.json() : null };
+}
+export async function fotmobPhotos({ fetchJson = fotmobJson, pace = FOTMOB_PACE, sleep, write = writeFaces, carry = carryFaces, leagues = FOTMOB_LEAGUES, espn = espnSquads } = {}) {
+  const fm = fotmobReader(fetchJson, pace, sleep);
+  const squads = new Map(); // team id → its squad (a promise), each asked once
+  const squad = id => {
+    if (!squads.has(id)) squads.set(id, fm.read(`/teams?id=${id}`).then(d => d?.squad || null));
+    return squads.get(id);
+  };
+  const built = {};
+  const one = async (key, ids) => {
+    if (typeof ids[0] === 'string') return;
+    const teams = new Map();
+    for (const id of ids) for (const [t, name] of fotmobTeams(await fm.read(`/leagues?id=${id}`))) teams.set(t, name);
+    if (teams.size < 4) throw new Error(`${teams.size} teams`);
+    const list = [...teams.keys()];
+    const got = new Array(list.length);
+    let next = 0;
+    await Promise.all(Array.from({ length: pace.at }, async () => {
+      while (next < list.length) {
+        const i = next++;
+        got[i] = await squad(list[i]);
+      }
+    }));
+    // (A failed read has thrown; a club FotMob has no squad for, a non-league one in a cup, is fine.)
+    const missed = got.filter(s => !s?.squad?.length).length;
+    if (missed > list.length / 2) throw new Error(`${missed} of ${list.length} squads empty`);
+    built[key] = got.filter(Boolean);
+  };
+  const lines = [];
+  for (const [key, ids] of Object.entries(leagues)) {
+    try {
+      if (fm.stopped()) throw new Error('fotmob: too many');
+      await one(key, ids);
+    } catch (e) {
+      lines.push(`${key} carried (${e.message})`);
+    }
+  }
+  // A cup made of other leagues' clubs.
+  for (const [key, ids] of Object.entries(leagues)) if (typeof ids[0] === 'string' && ids.every(k => built[k])) built[key] = ids.flatMap(k => built[k]);
+  for (const key of Object.keys(leagues)) {
+    if (built[key]) {
+      const players = fotmobNames(built[key]);
+      // ESPN's other names for them, club by club (a cup's clubs are the cup's ESPN squads).
+      const taken = new Set(players.map(([name]) => faceKey(name)));
+      const clubs = [...espn].filter(([k]) => k.startsWith(`${key}:`) || (typeof leagues[key][0] === 'string' && leagues[key].some(l => k.startsWith(`${l}:`)))).map(([, names]) => names);
+      for (const [name, id] of clubMatches(built[key], clubs)) if (!taken.has(faceKey(name))) taken.add(faceKey(name)) && players.push([name, id]);
+      await write(key, players);
+      lines.push(`${key} ${players.length}`);
+    } else if (!(await carry(key))) lines.push(`${key} none`);
+  }
+  console.log(`fotmob faces: ${fm.asked.n} asked · ${lines.join(' · ')}`);
+  return built;
+}
+async function writeFaces(key, players) {
+  await mkdir(`site/sports/${key}`, { recursive: true });
+  await writeFile(`site/sports/${key}/faces.json`, JSON.stringify({ built: NOW, players }));
+}
+// A list this build couldn't make: the published one, as it was (a Pages deploy replaces the whole site).
+export async function carryPublished(path) {
+  const res = await fetch(`${PUBLISHED}${path}`, { signal: AbortSignal.timeout(15_000) }).catch(() => null);
+  if (!res?.ok) return false;
+  const body = await res.text();
+  await mkdir(dirname(`site/${path}`), { recursive: true });
+  await writeFile(`site/${path}`, body);
+  return true;
+}
+const carryFaces = key => carryPublished(`sports/${key}/faces.json`);
+
 // The players whose photo isn't the silhouette. A failed read (no tag) keeps
 // the player: a photo that may be there isn't dropped for a failed read.
 export async function withPhotos(players, tag, silhouette, at = 16) {
@@ -653,6 +867,8 @@ async function main() {
   );
   await Promise.all([f1(), asia()]);
   console.log(`leagues ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  // After the leagues: their ESPN squads match FotMob's players club by club.
+  await fotmobPhotos();
   const p = await playerPages();
   console.log(`players: ${p.done} pages${p.left ? `, ${p.left} left for lack of ${p.why}` : ''}`);
   const index = { built: NOW, until: LAST, match: [...kinds.values()], counts: stats };
