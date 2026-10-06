@@ -1,4 +1,5 @@
-// Past games' win probability, while Orbit Sports can show them: a game
+// Past games' win probability (and F1 races' chances by lap), while Orbit
+// Sports can show them: a game
 // over doesn't change, so its line is read once (Polymarket's market on it,
 // where ESPN draws none: soccer, CPBL, an MLB or NBA game ESPN left without
 // one) and carried over each night from the published site (a Pages deploy
@@ -23,7 +24,7 @@ const LIB = resolve(process.env.SPORTS_LIB || '../Orbit-Sports/public/lib');
 const { CATALOG, asiaMonthUrl, asiaMonthOf } = await import(pathToFileURL(`${KIT}/catalog.mjs`).href);
 const { trimPolymarketGames } = await import(pathToFileURL(`${ROOT}/sports-proxy-worker.js`).href);
 const { asiaBaseballResponse } = await import(pathToFileURL(`${ROOT}/asia-baseball.js`).href);
-const { polymarketLine, packLine, gameKey, PM_LEAGUE, PM_PACK, GAMES_TRIM } = await import(pathToFileURL(`${LIB}/winprob.mjs`).href);
+const { polymarketLine, packLine, gameKey, PM_LEAGUE, PM_PACK, GAMES_TRIM, raceLine, raceLaps, packRace, raceKey } = await import(pathToFileURL(`${LIB}/winprob.mjs`).href);
 
 const PUBLISHED = process.env.PUBLISHED || 'https://jaypengx.github.io/Shared-Data/';
 const SITE = 'https://site.api.espn.com/apis/site/v2/sports';
@@ -154,13 +155,42 @@ async function league(key, l, games) {
   return season;
 }
 
+// ---- F1: each race's chances by lap (OpenF1's laps once it has them) ----
+// Kept: this year's races; until this year's first, last year's too (the
+// app shows the last season then).
+async function f1(games) {
+  const year = new Date(NOW).getUTCFullYear();
+  const races = [];
+  for (const y of [year - 1, year]) races.push(...((await get(`https://api.openf1.org/v1/sessions?year=${y}&session_name=Race`).catch(() => null)) || []));
+  const started = races.some(r => new Date(r.date_start).getUTCFullYear() === year && Date.parse(r.date_start) < NOW);
+  const keep = t => new Date(t).getUTCFullYear() === year || (!started && new Date(t).getUTCFullYear() === year - 1);
+  const read = (url, { trim = '' }) => get(url, { trim });
+  for (const r of races) {
+    const t = Date.parse(r.date_start);
+    const k = raceKey(r.date_start);
+    if (!keep(t) || games.has(k) || t > NOW - 4 * HOUR || r.is_cancelled) continue;
+    const laps = await raceLaps(r.date_start, read).catch(() => null);
+    // OpenF1's laps come in a little after the race; two days on without them, by the clock.
+    if (!laps && NOW - t < GIVE_UP) {
+      stats.later++;
+      continue;
+    }
+    const line = await raceLine(r.date_start, read, laps).catch(() => null);
+    if (line) stats.lines++, games.set(k, { t, ...packRace(line) });
+    else if (NOW - t > GIVE_UP) stats.none++, games.set(k, { t, none: 'polymarket' });
+    else stats.later++;
+  }
+  for (const [k, v] of games) if (!keep(v.t)) games.delete(k), stats.dropped++;
+}
+
 const store = await published();
 for (const games of store.values()) stats.carried += games.size;
 const index = { built: new Date(NOW).toISOString(), leagues: {} };
-for (const [key, l] of Object.entries(CATALOG).filter(([k]) => PM_LEAGUE[k])) {
+for (const [key, l] of [...Object.entries(CATALOG).filter(([k]) => PM_LEAGUE[k]), ['f1', null]]) {
   const games = store.get(key) || new Map();
   const before = { ...stats };
-  await league(key, l, games);
+  if (key === 'f1') await f1(games);
+  else await league(key, l, games);
   const months = new Map();
   for (const [k, v] of games) {
     const m = month(v.t);
