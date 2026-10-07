@@ -22,7 +22,7 @@ test('each player under every name; a shared name or a stand-in picture left out
 
 test("LaLiga's squads: the half-body picture at 256 px", () => {
   const people = laligaSquads([{ squads: [{ role: { id: 1 }, person: { name: 'Pedro González López', nickname: 'Pedri', firstname: 'Pedro', lastname: 'González' }, photos: { '001': { '256x278': 'https://assets.laliga.com/p.png' } } }] }]);
-  assert.deepEqual(people, [{ names: ['Pedro González López', 'Pedri', 'Pedro González'], url: 'https://assets.laliga.com/p.png' }]);
+  assert.deepEqual(people, [{ names: ['Pedro González López', 'Pedri', 'Pedro González'], url: 'https://assets.laliga.com/p.png', club: 0 }]);
 });
 
 test("the Bundesliga's squad page: the half-body picture behind the circle's", () => {
@@ -49,4 +49,20 @@ test("a league that can't be read is carried over; one read is written", async (
   await officialPhotos({ leagues: { good: async () => many, down: async () => null }, write: async (k, p) => written.push([k, p.length]), carry: async path => (carried.push(path), true) });
   assert.deepEqual(written, [['good', 320]]);
   assert.deepEqual(carried, ['sports/down/photos.json']);
+});
+
+test("ESPN's short names find a league's legal ones, club by club", async () => {
+  const { sameNameish } = await import('../mirror.mjs');
+  const { clubFits } = await import('../official-photos.mjs');
+  const people = [
+    { names: ['Marcus Lilian Thuram Ulien'], url: 'https://x/thuram', club: 0 },
+    { names: ['Diop Tehuti Djed-Hotep Spence'], url: 'https://x/spence', club: 0 },
+    { names: ['Nicolò Barella'], url: 'https://x/barella', club: 0 },
+    { names: ['Alessandro Bastoni'], url: 'https://x/bastoni', club: 0 },
+    { names: ['Federico Dimarco'], url: 'https://x/dimarco', club: 0 },
+    { names: ['Minjae Kim'], url: 'https://x/kim', club: 0 },
+    { names: ['Marcus Holmgren Pedersen'], url: 'https://x/other', club: 1 }
+  ];
+  const espn = [['Marcus Thuram', 'Djed Spence', 'Kim Min-Jae', 'Nicolò Barella', 'Alessandro Bastoni', 'Federico Dimarco']];
+  assert.deepEqual(clubFits(people, espn, sameNameish), [['Marcus Thuram', 'https://x/thuram'], ['Djed Spence', 'https://x/spence'], ['Kim Min-Jae', 'https://x/kim']]);
 });

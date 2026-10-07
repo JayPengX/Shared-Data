@@ -855,13 +855,6 @@ async function main() {
   await readSeasons();
   await leaguePhotos();
   await plPhotos();
-  await officialPhotos({
-    write: async (key, players) => {
-      await mkdir(`site/sports/${key}`, { recursive: true });
-      await writeFile(`site/sports/${key}/photos.json`, JSON.stringify({ built: NOW, players }));
-    },
-    carry: carryPublished
-  });
   const t0 = Date.now();
   const leagueQueue = [...ESPN_LEAGUES];
   await Promise.all(
@@ -876,7 +869,16 @@ async function main() {
   );
   await Promise.all([f1(), asia()]);
   console.log(`leagues ${((Date.now() - t0) / 1000).toFixed(0)} s`);
-  // After the leagues: their ESPN squads match FotMob's players club by club.
+  // After the leagues: their ESPN squads match the leagues' own and FotMob's players club by club.
+  await officialPhotos({
+    write: async (key, players) => {
+      await mkdir(`site/sports/${key}`, { recursive: true });
+      await writeFile(`site/sports/${key}/photos.json`, JSON.stringify({ built: NOW, players }));
+    },
+    carry: carryPublished,
+    espn: espnSquads,
+    same: sameNameish
+  });
   await fotmobPhotos();
   const p = await playerPages();
   console.log(`players: ${p.done} pages${p.left ? `, ${p.left} left for lack of ${p.why}` : ''}`);

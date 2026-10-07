@@ -82,10 +82,10 @@ export async function laligaPeople(year = seasonYear()) {
   return laligaSquads(squads);
 }
 export const laligaSquads = squads =>
-  squads.flatMap(sq =>
+  squads.flatMap((sq, club) =>
     (sq?.squads || [])
       .filter(s => s.role?.id === 1 || /jugador|player/i.test(s.role?.name || '') || s.position)
-      .map(s => ({ names: [s.person?.name, s.person?.nickname, [s.person?.firstname, s.person?.lastname].filter(Boolean).join(' ')], url: s.photos?.['001']?.['256x278'] || s.photos?.['001']?.['512x556'] || '' }))
+      .map(s => ({ names: [s.person?.name, s.person?.nickname, [s.person?.firstname, s.person?.lastname].filter(Boolean).join(' ')], url: s.photos?.['001']?.['256x278'] || s.photos?.['001']?.['512x556'] || '', club }))
   );
 
 // ---- Bundesliga ----
@@ -95,7 +95,7 @@ export async function bundesligaPeople() {
   if (clubs.length < 18) return null;
   const pages = await each(clubs, c => text(`${BL}/${c}/squad`));
   if (pages.filter(Boolean).length < 16) return null;
-  return pages.flatMap(bundesligaSquad);
+  return pages.flatMap((p, club) => bundesligaSquad(p).map(x => ({ ...x, club })));
 }
 // A squad page's players (its state, the JSON Angular sends with the page).
 export function bundesligaSquad(html) {
@@ -133,7 +133,7 @@ export async function serieaPeople() {
   if (clubs.length < 18) return null;
   const pages = await each(clubs, c => text(`${SA}/team/${c}/squad`));
   if (pages.filter(Boolean).length < 16) return null;
-  return pages.flatMap(serieaSquad);
+  return pages.flatMap((p, club) => serieaSquad(p).map(x => ({ ...x, club })));
 }
 export function serieaSquad(html) {
   const out = [];
@@ -150,7 +150,7 @@ export async function ligue1People() {
   if (clubs.length < 18) return null;
   const sums = await each(clubs, c => json(`${L1}/championship-club-summary/${c}?season=${season}`));
   if (sums.filter(Boolean).length < 16) return null;
-  return sums.flatMap(ligue1Squad);
+  return sums.flatMap((p, club) => ligue1Squad(p).map(x => ({ ...x, club })));
 }
 export const ligue1Squad = sum =>
   Object.values(sum?.championships?.['1']?.playersData || {}).map(p => {
@@ -158,12 +158,62 @@ export const ligue1Squad = sum =>
     return { names: [[id.firstName, id.lastName].filter(Boolean).join(' '), id.knownName, id.shortName].filter(Boolean), url: id.assets?.bustPictures?.medium || '' };
   });
 
+// ESPN's names the league's don't give exactly (Serie A's are legal names:
+// "Marcus Lilian Thuram Ulien" for ESPN's "Marcus Thuram"), matched club by
+// club: each ESPN squad (`espnClubs`, [names]) to the league's club sharing
+// the most names with it, then each name of its left over to the one player
+// there whose name it fits (`same`, mirror.mjs sameNameish); two fits, none.
+// The same name in another order, its parts run together or not (ESPN's
+// "Kim Min-Jae", the Bundesliga's "Minjae Kim").
+export function turned(a, b) {
+  const w = a.split(' ');
+  const flat = b.replace(/ /g, '');
+  return w.length > 1 && w.some((_, i) => [...w.slice(i), ...w.slice(0, i)].join('') === flat);
+}
+export function clubFits(people, espnClubs, same) {
+  const clubs = new Map();
+  for (const p of people) {
+    if (!p?.url || p.club == null) continue;
+    if (!clubs.has(p.club)) clubs.set(p.club, []);
+    clubs.get(p.club).push({ url: p.url, keys: [...new Set((p.names || []).map(nameKey).filter(Boolean))] });
+  }
+  const found = [];
+  for (const names of espnClubs) {
+    const espn = names.map(name => ({ name, k: nameKey(name) }));
+    const keys = new Set(espn.map(x => x.k));
+    let club = null;
+    let most = 2;
+    for (const c of clubs.values()) {
+      const n = c.filter(p => p.keys.some(k => keys.has(k))).length;
+      if (n > most) [club, most] = [c, n];
+    }
+    if (!club) continue;
+    const named = new Set(club.flatMap(p => p.keys));
+    const left = club.filter(p => !p.keys.some(k => keys.has(k)));
+    for (const x of espn) {
+      if (named.has(x.k)) continue;
+      const fits = left.filter(p => p.keys.some(k => same(x.k, k) || turned(x.k, k)));
+      if (fits.length === 1) found.push([x.name, fits[0].url]);
+    }
+  }
+  const count = new Map();
+  for (const [, url] of found) count.set(url, (count.get(url) || 0) + 1);
+  return found.filter(([, url]) => count.get(url) === 1);
+}
+
 export const OFFICIAL = { laliga: laligaPeople, bundesliga: bundesligaPeople, seriea: serieaPeople, ligue1: ligue1People };
 // Each league's list, written; or carried over (`carry`) when it can't be read.
-export async function officialPhotos({ write, carry, leagues = OFFICIAL } = {}) {
+// `espn`: each club's names as ESPN has them ('<league>:<team id>' → [names],
+// mirror.mjs espnSquads), `same` the name fit (mirror.mjs sameNameish).
+export async function officialPhotos({ write, carry, leagues = OFFICIAL, espn = new Map(), same = null } = {}) {
   for (const [key, read] of Object.entries(leagues)) {
     const people = await read().catch(() => null);
     const players = people ? photoList(people) : [];
+    if (people && same) {
+      const taken = new Set(players.map(([n]) => nameKey(n)));
+      const clubs = [...espn].filter(([k]) => k.startsWith(`${key}:`)).map(([, names]) => names);
+      for (const [name, url] of clubFits(people.filter(p => !/\/default|defaultAssets/i.test(p.url || '')), clubs, same)) if (!taken.has(nameKey(name))) taken.add(nameKey(name)) && players.push([name, url]);
+    }
     if (players.length < 300) {
       console.log(`${key} photos: left out (${players.length} names)${(await carry(`sports/${key}/photos.json`)) ? ', carried' : ''}`);
       continue;
