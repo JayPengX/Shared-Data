@@ -110,5 +110,5 @@ test('cutouts: only names no list has, kept from night to night, within the nigh
   assert.ok(got.none['unknown kid']);
   const again = await cutouts({ espn, covered: new Set(), carried: {}, search: async () => '', sleep: async () => {}, budget: 1 });
   assert.equal(again.asked, 1);
-  assert.equal(again.left, 4);
+  assert.deepEqual(again.left, ['Kieran Tierney', 'Unknown Kid', 'Old None', 'Covered Star']);
 });

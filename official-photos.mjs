@@ -282,9 +282,11 @@ export async function tsdbCutout(name, fetchJson = async u => {
   const hits = (d?.player || []).filter(p => p.strSport === 'Soccer' && p.strCutout && nameKey(p.strPlayer) === want);
   return hits.length === 1 ? hits[0].strCutout : '';
 }
-export async function cutouts({ espn, covered, carried = {}, search = tsdbCutout, budget = 450, gap = 2100, sleep = ms => new Promise(r => setTimeout(r, ms)), now = Date.now() }) {
-  const found = new Map((carried.players || []).map(([n, u]) => [nameKey(n), [n, u]]));
-  const none = Object.fromEntries(Object.entries(carried.none || {}).filter(([, t]) => now - t < NONE_AGAIN));
+// The names still to look up: each competition's squads' (ESPN's), none
+// that a league's list or the kept cutouts have, none looked for lately.
+export function pendingNames({ espn, covered, carried = {}, now = Date.now() }) {
+  const found = new Set((carried.players || []).map(([n]) => nameKey(n)));
+  const none = carried.none || {};
   const wanted = [];
   const seen = new Set();
   for (const league of CUTOUT_LEAGUES)
@@ -292,13 +294,20 @@ export async function cutouts({ espn, covered, carried = {}, search = tsdbCutout
       if (k.startsWith(`${league}:`))
         for (const n of names) {
           const key = nameKey(n);
-          if (!key || seen.has(key) || covered.has(key) || found.has(key) || none[key]) continue;
+          if (!key || seen.has(key) || covered.has(key) || found.has(key) || (none[key] && now - none[key] < NONE_AGAIN)) continue;
           seen.add(key);
           wanted.push(n);
         }
+  return wanted;
+}
+// Looks up `names` in turn (at most `budget`): the kept list with what's found.
+export async function cutouts({ names, carried = {}, search = tsdbCutout, budget = 450, gap = 2100, sleep = ms => new Promise(r => setTimeout(r, ms)), now = Date.now(), espn, covered }) {
+  if (!names) names = pendingNames({ espn, covered, carried, now });
+  const found = new Map((carried.players || []).map(([n, u]) => [nameKey(n), [n, u]]));
+  const none = Object.fromEntries(Object.entries(carried.none || {}).filter(([, t]) => now - t < NONE_AGAIN));
   let asked = 0;
   let limited = 0;
-  for (const n of wanted) {
+  for (const n of names) {
     if (asked >= budget || limited >= 2) break;
     if (asked) await sleep(gap);
     asked++;
@@ -313,5 +322,5 @@ export async function cutouts({ espn, covered, carried = {}, search = tsdbCutout
       }
     }
   }
-  return { players: [...found.values()], none, asked, left: wanted.length - asked };
+  return { players: [...found.values()], none, asked, left: names.slice(asked) };
 }

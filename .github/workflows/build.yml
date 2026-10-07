@@ -12,16 +12,19 @@
 # before it, past games' win probability (winprob.mjs), read once and
 # carried over while Sports can show the game. The buses need the repo secrets TDX_CLIENT_ID and
 # TDX_CLIENT_SECRET.
+# Between the nights, every three hours or so: only TheSportsDB's cutouts
+# (cutouts.mjs) for the footballers the night left, on the site as last built.
 name: Build
 on:
   schedule:
     - cron: '23 16 * * *'
+    - cron: '41 19,22,1,4,7,10,13 * * *'
   workflow_dispatch:
     inputs:
       part:
         description: What to build (the rest as last built)
         type: choice
-        options: [winprob, sports, mirror, everything]
+        options: [winprob, sports, mirror, cutouts, everything]
         default: winprob
       buses:
         description: Rebuild the bus packs too
@@ -44,8 +47,8 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     env:
       # The night's build (or asked for whole): every part; by hand, only the one asked for.
-      FULL: ${{ github.event_name == 'schedule' || inputs.part == 'everything' }}
-      PART: ${{ inputs.part }}
+      FULL: ${{ (github.event_name == 'schedule' && github.event.schedule == '23 16 * * *') || inputs.part == 'everything' }}
+      PART: ${{ github.event_name == 'schedule' && github.event.schedule != '23 16 * * *' && 'cutouts' || inputs.part }}
     steps:
       - uses: actions/checkout@v4
       # The shared kit's league catalogue (which leagues, their ESPN paths).
@@ -120,6 +123,10 @@ jobs:
         env:
           KIT: shared/kit
           SPORTS_LIB: sports-app/public/lib
+      # The day's runs: the cutouts the night left (and, by hand, the same).
+      - name: Cutouts
+        if: env.PART == 'cutouts'
+        run: node cutouts.mjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

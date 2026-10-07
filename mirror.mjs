@@ -845,7 +845,9 @@ async function cutoutPhotos() {
   const got = await cutouts({ espn: espnSquads, covered, carried });
   await mkdir('site/sports/cutouts', { recursive: true });
   await writeFile('site/sports/cutouts/photos.json', JSON.stringify({ built: NOW, players: got.players, none: got.none }));
-  console.log(`cutouts: ${got.players.length} players have one, ${got.asked} asked tonight, ${got.left} left for the next nights`);
+  // The names left, for the day's runs (cutouts.mjs) to go on with.
+  await writeFile('site/sports/cutouts/pending.json', JSON.stringify({ built: NOW, names: got.left }));
+  console.log(`cutouts: ${got.players.length} players have one, ${got.asked} asked tonight, ${got.left.length} left for the day's runs`);
 }
 
 // The players whose photo isn't the silhouette. A failed read (no tag) keeps
