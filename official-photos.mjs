@@ -5,7 +5,11 @@
 //   - LaLiga: its public API (the key its site sends), every club's squad;
 //   - Bundesliga: each club's squad page (the players in its page state);
 //   - Serie A: each club's squad page (each player's picture and name);
-//   - Ligue 1: its API's club summaries (each player's "bust" picture).
+//   - Ligue 1: its API's club summaries (each player's "bust" picture);
+//   - MLS: its content API (every active player, the roster's picture).
+// Everyone else (Scotland, the European cups' other clubs, the FA Cup's
+// lower leagues, national teams): TheSportsDB's studio cutouts, looked up a
+// few hundred a night and kept (cutouts below).
 // → site/sports/<league>/photos.json ({ built, players: [[name, url]…] }):
 // each player under every name ESPN may call them (full, short, the known
 // name), a name two players share left out (no face is better than a wrong
@@ -188,20 +192,53 @@ export function clubFits(people, espnClubs, same) {
       if (n > most) [club, most] = [c, n];
     }
     if (!club) continue;
-    const named = new Set(club.flatMap(p => p.keys));
     const left = club.filter(p => !p.keys.some(k => keys.has(k)));
+    const surname = k => k.split(' ').at(-1);
     for (const x of espn) {
-      if (named.has(x.k)) continue;
-      const fits = left.filter(p => p.keys.some(k => same(x.k, k) || turned(x.k, k)));
+      // The same name at this club (a name two of the league's players share is still this club's one).
+      const exact = club.filter(p => p.keys.includes(x.k));
+      if (exact.length) {
+        if (exact.length === 1) found.push([x.name, exact[0].url]);
+        continue;
+      }
+      let fits = left.filter(p => p.keys.some(k => same(x.k, k) || turned(x.k, k)));
+      // Else the one player left at the club with that surname, when ESPN's
+      // squad has no one else of it ("Leo Messi", ESPN's "Lionel Messi").
+      if (!fits.length && x.k.includes(' ') && espn.filter(y => surname(y.k) === surname(x.k)).length === 1) fits = left.filter(p => p.keys.some(k => k.includes(' ') && surname(k) === surname(x.k)));
       if (fits.length === 1) found.push([x.name, fits[0].url]);
     }
   }
-  const count = new Map();
-  for (const [, url] of found) count.set(url, (count.get(url) || 0) + 1);
-  return found.filter(([, url]) => count.get(url) === 1);
+  // One player two names fit, or one name two players: neither.
+  const byUrl = new Map();
+  const byName = new Map();
+  for (const [name, url] of found) {
+    byUrl.set(url, new Set([...(byUrl.get(url) || []), nameKey(name)]));
+    byName.set(nameKey(name), new Set([...(byName.get(nameKey(name)) || []), url]));
+  }
+  const seen = new Set();
+  return found.filter(([name, url]) => byUrl.get(url).size === 1 && byName.get(nameKey(name)).size === 1 && !seen.has(nameKey(name)) && seen.add(nameKey(name)));
 }
 
-export const OFFICIAL = { laliga: laligaPeople, bundesliga: bundesligaPeople, seriea: serieaPeople, ligue1: ligue1People };
+// ---- MLS ----
+const MLS = 'https://dapi.mlssoccer.com/v2/content/en-us/players';
+export async function mlsPeople() {
+  const out = [];
+  for (let skip = 0; skip < 3000; skip += 100) {
+    const d = await json(`${MLS}?fields.isActiveMLSPlayer=true&$skip=${skip}&$limit=100`);
+    if (!d?.items) return null;
+    out.push(...mlsSquad(d.items));
+    if (d.items.length < 100) break;
+  }
+  return out;
+}
+export const mlsSquad = items =>
+  (items || []).map(x => ({
+    names: [x.title, [x.fields?.firstName, x.fields?.lastName].filter(Boolean).join(' ')],
+    url: x.thumbnail?.templateUrl?.includes('{formatInstructions}') ? x.thumbnail.templateUrl.replace('{formatInstructions}', 'w_256,c_scale,q_auto,f_png') : '',
+    club: x.fields?.clubSportecId ?? null
+  }));
+
+export const OFFICIAL = { laliga: laligaPeople, bundesliga: bundesligaPeople, seriea: serieaPeople, ligue1: ligue1People, mls: mlsPeople };
 // Each league's list, written; or carried over (`carry`) when it can't be read.
 // `espn`: each club's names as ESPN has them ('<league>:<team id>' → [names],
 // mirror.mjs espnSquads), `same` the name fit (mirror.mjs sameNameish).
@@ -221,4 +258,60 @@ export async function officialPhotos({ write, carry, leagues = OFFICIAL, espn = 
     await write(key, players);
     console.log(`${key} photos: ${people.filter(p => p.url).length} players, ${players.length} names`);
   }
+}
+
+// ---- TheSportsDB's cutouts, for everyone the leagues' lists don't have ----
+// Each player in these competitions' squads (ESPN's names) without an
+// official photo: TheSportsDB's player search, the one footballer of that
+// name with a cutout (two: neither). Its free key takes about 30 searches a
+// minute: one every 2.1 s, at most `budget` a night (a 429 waits a minute,
+// a second stops it), so the list fills over a few nights and is kept:
+// found ones carried from the last published list, a name with none asked
+// again after two weeks. → site/sports/cutouts/photos.json
+// ({ built, players: [[name, url]…], none: { key: when } }).
+export const CUTOUT_LEAGUES = ['scotland', 'ucl', 'uel', 'uecl', 'mls', 'facup', 'nationsleague'];
+const TSDB = 'https://www.thesportsdb.com/api/v1/json/3/searchplayers.php?p=';
+const NONE_AGAIN = 14 * 86_400_000;
+export async function tsdbCutout(name, fetchJson = async u => {
+  const r = await fetch(u, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20_000) });
+  if (!r.ok) throw Object.assign(new Error(String(r.status)), { status: r.status });
+  return r.json();
+}) {
+  const d = await fetchJson(TSDB + encodeURIComponent(name));
+  const want = nameKey(name);
+  const hits = (d?.player || []).filter(p => p.strSport === 'Soccer' && p.strCutout && nameKey(p.strPlayer) === want);
+  return hits.length === 1 ? hits[0].strCutout : '';
+}
+export async function cutouts({ espn, covered, carried = {}, search = tsdbCutout, budget = 450, gap = 2100, sleep = ms => new Promise(r => setTimeout(r, ms)), now = Date.now() }) {
+  const found = new Map((carried.players || []).map(([n, u]) => [nameKey(n), [n, u]]));
+  const none = Object.fromEntries(Object.entries(carried.none || {}).filter(([, t]) => now - t < NONE_AGAIN));
+  const wanted = [];
+  const seen = new Set();
+  for (const league of CUTOUT_LEAGUES)
+    for (const [k, names] of espn)
+      if (k.startsWith(`${league}:`))
+        for (const n of names) {
+          const key = nameKey(n);
+          if (!key || seen.has(key) || covered.has(key) || found.has(key) || none[key]) continue;
+          seen.add(key);
+          wanted.push(n);
+        }
+  let asked = 0;
+  let limited = 0;
+  for (const n of wanted) {
+    if (asked >= budget || limited >= 2) break;
+    if (asked) await sleep(gap);
+    asked++;
+    try {
+      const url = await search(n);
+      if (url) found.set(nameKey(n), [n, url]);
+      else none[nameKey(n)] = now;
+    } catch (error) {
+      if (error?.status === 429) {
+        limited++;
+        await sleep(60_000);
+      }
+    }
+  }
+  return { players: [...found.values()], none, asked, left: wanted.length - asked };
 }

@@ -64,5 +64,51 @@ test("ESPN's short names find a league's legal ones, club by club", async () => 
     { names: ['Marcus Holmgren Pedersen'], url: 'https://x/other', club: 1 }
   ];
   const espn = [['Marcus Thuram', 'Djed Spence', 'Kim Min-Jae', 'Nicolò Barella', 'Alessandro Bastoni', 'Federico Dimarco']];
-  assert.deepEqual(clubFits(people, espn, sameNameish), [['Marcus Thuram', 'https://x/thuram'], ['Djed Spence', 'https://x/spence'], ['Kim Min-Jae', 'https://x/kim']]);
+  assert.deepEqual(Object.fromEntries(clubFits(people, espn, sameNameish)), { 'Marcus Thuram': 'https://x/thuram', 'Djed Spence': 'https://x/spence', 'Kim Min-Jae': 'https://x/kim', 'Nicolò Barella': 'https://x/barella', 'Alessandro Bastoni': 'https://x/bastoni', 'Federico Dimarco': 'https://x/dimarco' });
+  // A name the league shares between clubs is this club's; a surname alone, when it's the only one.
+  const mls = [
+    { names: ['Luis Suárez'], url: 'https://x/suarez-miami', club: 'MIA' },
+    { names: ['Leo Messi'], url: 'https://x/messi', club: 'MIA' },
+    { names: ['Jordi Alba'], url: 'https://x/alba', club: 'MIA' },
+    { names: ['Sergio Busquets'], url: 'https://x/busquets', club: 'MIA' },
+    { names: ['Luis Suárez'], url: 'https://x/suarez-other', club: 'OTH' }
+  ];
+  assert.deepEqual(Object.fromEntries(clubFits(mls, [['Lionel Messi', 'Luis Suárez', 'Jordi Alba', 'Sergio Busquets']], sameNameish)), { 'Lionel Messi': 'https://x/messi', 'Luis Suárez': 'https://x/suarez-miami', 'Jordi Alba': 'https://x/alba', 'Sergio Busquets': 'https://x/busquets' });
+});
+
+test("MLS's players: the roster picture at 256 px, by club", async () => {
+  const { mlsSquad } = await import('../official-photos.mjs');
+  const items = [{ title: 'Riquelme Fillipi', fields: { firstName: 'Riquelme', lastName: 'Fillipi', clubSportecId: 'MLS-CLU-000008' }, thumbnail: { templateUrl: 'https://images.mlssoccer.com/image/private/{formatInstructions}/mls/wjl' } }, { title: 'No Picture', fields: {} }];
+  assert.deepEqual(mlsSquad(items), [
+    { names: ['Riquelme Fillipi', 'Riquelme Fillipi'], url: 'https://images.mlssoccer.com/image/private/w_256,c_scale,q_auto,f_png/mls/wjl', club: 'MLS-CLU-000008' },
+    { names: ['No Picture', ''], url: '', club: null }
+  ]);
+});
+
+test("TheSportsDB: the one footballer of that name with a cutout; two, neither", async () => {
+  const { tsdbCutout } = await import('../official-photos.mjs');
+  const answer = players => async () => ({ player: players });
+  assert.equal(await tsdbCutout('Liam Scales', answer([{ strPlayer: 'Liam Scales', strSport: 'Soccer', strCutout: 'https://r2.thesportsdb.com/c.png' }, { strPlayer: 'Liam Scales', strSport: 'Rugby', strCutout: 'x' }])), 'https://r2.thesportsdb.com/c.png');
+  assert.equal(await tsdbCutout('Danilo', answer([{ strPlayer: 'Danilo', strSport: 'Soccer', strCutout: 'a' }, { strPlayer: 'Danilo', strSport: 'Soccer', strCutout: 'b' }])), '');
+  assert.equal(await tsdbCutout('Nobody', answer(null)), '');
+});
+
+test('cutouts: only names no list has, kept from night to night, within the night\'s budget', async () => {
+  const { cutouts } = await import('../official-photos.mjs');
+  const espn = new Map([['scotland:256', ['Liam Scales', 'Kieran Tierney', 'Unknown Kid', 'Old None']], ['epl:359', ['Bukayo Saka']], ['ucl:256', ['Liam Scales', 'Covered Star']]]);
+  const asked = [];
+  const got = await cutouts({
+    espn,
+    covered: new Set(['covered star']),
+    carried: { players: [['Kieran Tierney', 'https://r2/t.png']], none: { 'old none': Date.now() - 86_400_000 } },
+    search: async n => (asked.push(n), n === 'Liam Scales' ? 'https://r2/s.png' : ''),
+    sleep: async () => {},
+    budget: 5
+  });
+  assert.deepEqual(asked, ['Liam Scales', 'Unknown Kid'], "Saka is the Premier League's (not a cutout league here), Tierney kept, Old None asked lately");
+  assert.deepEqual(Object.fromEntries(got.players), { 'Kieran Tierney': 'https://r2/t.png', 'Liam Scales': 'https://r2/s.png' });
+  assert.ok(got.none['unknown kid']);
+  const again = await cutouts({ espn, covered: new Set(), carried: {}, search: async () => '', sleep: async () => {}, budget: 1 });
+  assert.equal(again.asked, 1);
+  assert.equal(again.left, 4);
 });

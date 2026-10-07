@@ -32,7 +32,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { officialPhotos } from './official-photos.mjs';
+import { officialPhotos, cutouts, nameKey } from './official-photos.mjs';
 
 const KIT = resolve(process.env.KIT || '../Shared-Proxy/kit');
 const ROOT = resolve(KIT, '..');
@@ -833,6 +833,21 @@ export async function carryPublished(path) {
 }
 const carryFaces = key => carryPublished(`sports/${key}/faces.json`);
 
+// Footballers the leagues' own lists don't have: TheSportsDB's cutouts
+// (official-photos.mjs cutouts), kept from night to night.
+async function cutoutPhotos() {
+  const covered = new Set();
+  for (const key of ['epl', 'laliga', 'bundesliga', 'seriea', 'ligue1', 'mls']) {
+    const list = await readFile(`site/sports/${key}/photos.json`, 'utf8').then(JSON.parse).catch(() => null);
+    for (const [name] of list?.players || []) covered.add(nameKey(name));
+  }
+  const carried = await fetch(`${PUBLISHED}sports/cutouts/photos.json`, { signal: AbortSignal.timeout(15_000) }).then(r => (r.ok ? r.json() : {})).catch(() => ({}));
+  const got = await cutouts({ espn: espnSquads, covered, carried });
+  await mkdir('site/sports/cutouts', { recursive: true });
+  await writeFile('site/sports/cutouts/photos.json', JSON.stringify({ built: NOW, players: got.players, none: got.none }));
+  console.log(`cutouts: ${got.players.length} players have one, ${got.asked} asked tonight, ${got.left} left for the next nights`);
+}
+
 // The players whose photo isn't the silhouette. A failed read (no tag) keeps
 // the player: a photo that may be there isn't dropped for a failed read.
 export async function withPhotos(players, tag, silhouette, at = 16) {
@@ -880,7 +895,8 @@ async function main() {
     same: sameNameish
   });
   await fotmobPhotos();
-  const p = await playerPages();
+  // TheSportsDB's cutouts for the footballers no league list has, beside the players' pages.
+  const [p] = await Promise.all([playerPages(), cutoutPhotos()]);
   console.log(`players: ${p.done} pages${p.left ? `, ${p.left} left for lack of ${p.why}` : ''}`);
   const index = { built: NOW, until: LAST, match: [...kinds.values()], counts: stats };
   await mkdir('site/mirror', { recursive: true });
