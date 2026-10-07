@@ -39,7 +39,25 @@ concurrency:
   group: pages
   cancel-in-progress: false
 jobs:
+  # A day run (cutouts only) with nothing left to look up stops here: no
+  # rebuild, no redeploy.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.left.outputs.go }}
+    steps:
+      - id: left
+        run: |
+          if [ "${{ github.event_name == 'schedule' && github.event.schedule != '23 16 * * *' }}" = "true" ]; then
+            n=$(curl -sf https://jaypengx.github.io/Shared-Data/sports/cutouts/pending.json | jq '.names | length' || echo 1)
+            echo "cutouts left: $n"
+            [ "$n" = "0" ] && echo "go=false" >> "$GITHUB_OUTPUT" || echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
   build:
+    needs: check
+    if: needs.check.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 75
     environment:
