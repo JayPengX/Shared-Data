@@ -301,14 +301,15 @@ export function pendingNames({ espn, covered, carried = {}, now = Date.now() }) 
   return wanted;
 }
 // Looks up `names` in turn (at most `budget`): the kept list with what's found.
-export async function cutouts({ names, carried = {}, search = tsdbCutout, budget = 450, gap = 2100, sleep = ms => new Promise(r => setTimeout(r, ms)), now = Date.now(), espn, covered }) {
+// `until`: a time to stop by too (a day run's hour).
+export async function cutouts({ names, carried = {}, search = tsdbCutout, budget = 450, until = Infinity, gap = 2100, sleep = ms => new Promise(r => setTimeout(r, ms)), now = Date.now(), espn, covered }) {
   if (!names) names = pendingNames({ espn, covered, carried, now });
   const found = new Map((carried.players || []).map(([n, u]) => [nameKey(n), [n, u]]));
   const none = Object.fromEntries(Object.entries(carried.none || {}).filter(([, t]) => now - t < NONE_AGAIN));
   let asked = 0;
   let limited = 0;
   for (const n of names) {
-    if (asked >= budget || limited >= 2) break;
+    if (asked >= budget || limited >= 2 || Date.now() > until) break;
     if (asked) await sleep(gap);
     asked++;
     try {
