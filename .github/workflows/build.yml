@@ -126,6 +126,12 @@ jobs:
         run: node sports.mjs
         env:
           KIT: shared/kit
+      # CPBL's table as the league publishes it (cpbl.mjs): ESPN has none.
+      - name: CPBL table
+        if: env.FULL == 'true' || env.PART == 'sports'
+        run: node cpbl.mjs
+        env:
+          KIT: shared/kit
       # Past games' win probability while Sports can show them (winprob.mjs):
       # carried over from the published site, only the games over since read.
       - name: Win probability
