@@ -117,6 +117,7 @@ jobs:
       # CPBL's table as the league publishes it (cpbl.mjs): ESPN has none.
       - name: CPBL table
         if: env.FULL == 'true' || env.PART == 'sports'
+        continue-on-error: true
         run: node cpbl.mjs
         env:
           KIT: shared/kit
@@ -136,7 +137,10 @@ jobs:
           KIT: shared/kit
           SPORTS_LIB: sports-app/public/lib
       # What each recent game can be watched as (watch.mjs): every run.
+      # Never the night's undoing: a failure here leaves last run's pack out, the rest deploys.
       - name: Watch
+        continue-on-error: true
+        timeout-minutes: 25
         run: node watch.mjs
         env:
           KIT: shared/kit
