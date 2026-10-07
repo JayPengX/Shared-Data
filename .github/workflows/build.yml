@@ -99,7 +99,8 @@ jobs:
       - name: The site as last built
         if: env.FULL != 'true'
         run: |
-          id=$(gh run list --workflow build.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          # The newest run with the site in it (a day run that stopped early has none).
+          id=$(gh api "repos/${{ github.repository }}/actions/artifacts?name=github-pages&per_page=20" --jq '[.artifacts[] | select(.expired | not)][0].workflow_run.id')
           gh run download "$id" --name github-pages --dir last
           mkdir -p site && tar -xf last/artifact.tar -C site
           echo "restored $(find site -type f | wc -l) files from run $id"
