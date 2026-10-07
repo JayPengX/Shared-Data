@@ -12,8 +12,11 @@
 # before it, past games' win probability (winprob.mjs), read once and
 # carried over while Sports can show the game. The buses need the repo secrets TDX_CLIENT_ID and
 # TDX_CLIENT_SECRET.
-# Between the nights, every three hours or so: only TheSportsDB's cutouts
-# (cutouts.mjs) for the footballers the night left, on the site as last built.
+# Between the nights, every three hours or so, on the site as last built:
+# what each recent game can be watched as (watch.mjs: its official
+# highlights, ELTA's whole game; a game's highlights go up hours after it
+# ends), and TheSportsDB's cutouts (cutouts.mjs) for the footballers the
+# night left.
 name: Build
 on:
   schedule:
@@ -24,7 +27,7 @@ on:
       part:
         description: What to build (the rest as last built)
         type: choice
-        options: [winprob, sports, mirror, cutouts, everything]
+        options: [winprob, sports, mirror, cutouts, watch, everything]
         default: winprob
       buses:
         description: Rebuild the bus packs too
@@ -39,25 +42,7 @@ concurrency:
   group: pages
   cancel-in-progress: false
 jobs:
-  # A day run (cutouts only) with nothing left to look up stops here: no
-  # rebuild, no redeploy.
-  check:
-    runs-on: ubuntu-latest
-    outputs:
-      go: ${{ steps.left.outputs.go }}
-    steps:
-      - id: left
-        run: |
-          if [ "${{ github.event_name == 'schedule' && github.event.schedule != '23 16 * * *' }}" = "true" ]; then
-            n=$(curl -sf https://jaypengx.github.io/Shared-Data/sports/cutouts/pending.json | jq '.names | length' || echo 1)
-            echo "cutouts left: $n"
-            [ "$n" = "0" ] && echo "go=false" >> "$GITHUB_OUTPUT" || echo "go=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "go=true" >> "$GITHUB_OUTPUT"
-          fi
   build:
-    needs: check
-    if: needs.check.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 75
     environment:
@@ -80,6 +65,7 @@ jobs:
             quadra-token.js
             asia-baseball.js
             f1-live.js
+            package.json
           sparse-checkout-cone-mode: false
       # Orbit Sports' win probability (the matching shared with the app,
       # winprob.mjs) and its leagues (broadcast.mjs: what the mirror makes
@@ -91,6 +77,7 @@ jobs:
           sparse-checkout: |
             public/lib/winprob.mjs
             public/lib/broadcast.mjs
+            public/lib/highlights.mjs
           sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v4
         with:
@@ -145,6 +132,12 @@ jobs:
       - name: Mirror
         if: env.FULL == 'true' || env.PART == 'mirror'
         run: node mirror.mjs
+        env:
+          KIT: shared/kit
+          SPORTS_LIB: sports-app/public/lib
+      # What each recent game can be watched as (watch.mjs): every run.
+      - name: Watch
+        run: node watch.mjs
         env:
           KIT: shared/kit
           SPORTS_LIB: sports-app/public/lib
