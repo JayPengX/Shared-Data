@@ -26,11 +26,13 @@
 // → site/mirror/<trim or _>/<host><path>[/<query>].json ({ until, data }) at
 // the kit's mirrorPath; site/mirror/index.json ({ built, until, match, counts }).
 // Beside them, players' photo lists for the kit's photos.mjs:
-// site/sports/<league>/photos.json (NBA.com's, the Premier League's own) and
-// faces.json (FotMob's, every football league and cup).
+// site/sports/<league>/photos.json (NBA.com's, the Premier League's own, and
+// LaLiga's, the Bundesliga's, Serie A's and Ligue 1's: official-photos.mjs) and
+// faces.json (FotMob's, every football league and cup: the last resort).
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { officialPhotos } from './official-photos.mjs';
 
 const KIT = resolve(process.env.KIT || '../Shared-Proxy/kit');
 const ROOT = resolve(KIT, '..');
@@ -853,6 +855,13 @@ async function main() {
   await readSeasons();
   await leaguePhotos();
   await plPhotos();
+  await officialPhotos({
+    write: async (key, players) => {
+      await mkdir(`site/sports/${key}`, { recursive: true });
+      await writeFile(`site/sports/${key}/photos.json`, JSON.stringify({ built: NOW, players }));
+    },
+    carry: carryPublished
+  });
   const t0 = Date.now();
   const leagueQueue = [...ESPN_LEAGUES];
   await Promise.all(
