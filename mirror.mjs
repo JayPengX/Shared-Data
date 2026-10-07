@@ -223,7 +223,6 @@ const allOver = data => (data?.events || []).every(over);
 // pages are as published. Each is still read again every few nights (a
 // signing, a trade, an injury list), the teams spread over the nights.
 export let lastBuilt = 0;
-export const setLastBuilt = t => (lastBuilt = t);
 const nightNo = Math.floor(NOW / 86_400_000);
 const stagger = (id, every) => [...String(id)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % every === nightNo % every;
 const quiet = (espn, id) => lastBuilt > 0 && (teamLast.get(teamKey(espn, id)) ?? 0) < lastBuilt - 5 * HOUR;
@@ -633,7 +632,6 @@ export async function plPhotos() {
 // between, and on FotMob's "too many" a minute's wait, a second one stops it
 // asking; a list it couldn't make is carried over as last published.
 export const FOTMOB = 'https://www.fotmob.com/api/data';
-export const FOTMOB_PHOTO = id => `https://images.fotmob.com/image_resources/playerimages/${id}.png`;
 // Orbit's leagues → FotMob's (the Nations League's A to D; a key in place
 // of an id: a cup made of those leagues' clubs).
 export const FOTMOB_LEAGUES = {
