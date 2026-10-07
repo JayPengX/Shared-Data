@@ -18,3 +18,61 @@ test("CPBL's table as its page publishes it: the half, each club's record, its g
   assert.equal(t.rows[0].en, 'CTBC Brothers');
   assert.deepEqual(parseStandings('<html>not the page</html>').rows, []);
 });
+
+const wiki = `== 例行賽 ==
+=== 上半球季 ===
+{| class = "wikitable" style = "text-align:center"
+|-
+! width = 40  | 排名
+! width = 150 | 隊伍
+! width = 50  | 應賽
+! width = 50  | 已賽
+! width = 50  | 勝場
+! width = 50  | 敗場
+! width = 50  | 和局
+! width = 50  | 勝率
+! width = 50  | 勝差
+! width = 70  | 淘汰指數
+|-
+| 1 || [[味全龍]]         ||60||60||39||21||0||{{Winning percentage|39|21}}||–||封王
+|-
+| 2 || [[富邦悍將]]       ||60||60||34||26||0||{{Winning percentage|34|26}}||5.0||淘汰
+|-
+| 3 || [[統一7-ELEVEn獅|統一獅]] ||60||60||30||29||1||{{Winning percentage|30|29}}||8.5||淘汰
+|-
+| 3 || [[台鋼雄鷹]]       ||60||60||30||29||1||{{Winning percentage|30|29}}||8.5||淘汰
+|}
+{{中華職棒賽程/表頭|上半球季}}
+=== 下半球季 ===
+{| class = "wikitable"
+|-
+! 排名
+! 隊伍
+! 已賽
+! 勝場
+! 敗場
+! 和局
+! 勝率
+! 勝差
+|-
+| 1 || [[中信兄弟]] ||0||0||0||0||{{Winning percentage|0|0}}||–
+|}`;
+
+test("CPBL's tables from the season's Wikipedia page: each half and the year, by their headers", async () => {
+  const { parseWiki, combine } = await import('../cpbl.mjs');
+  const tables = parseWiki(wiki, 2026);
+  assert.equal(tables.length, 1, 'a table of fewer than four clubs is not one');
+  assert.equal(tables[0].title, '2026年 上半季');
+  assert.deepEqual(tables[0].rows[2], { rank: 3, en: 'Uni-President Lions', zh: '統一7-ELEVEn獅', gp: 60, w: 30, t: 1, l: 29, pct: '0.508', gb: '8.5', magic: '淘汰' });
+  assert.equal(tables[0].rows[0].gb, '-');
+  assert.equal(tables[0].rows[1].gb, '5');
+  // The league's page has the half on now: it replaces Wikipedia's, and comes first.
+  const one = parseStandings(html);
+  const official = { ...one, rows: [...one.rows, ...one.rows] };
+  const pack = combine(official, tables, 2026);
+  assert.equal(pack.half, 'second');
+  assert.deepEqual(pack.tables.map(x => x.key), ['second', 'first']);
+  assert.equal(pack.tables[0].rows[0].home, '16-0-14');
+  assert.equal(combine(null, tables, 2026).half, 'first');
+  assert.equal(combine(null, [], 2026), null);
+});
