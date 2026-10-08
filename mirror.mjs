@@ -881,6 +881,15 @@ async function main() {
   // When the published copies were read (none: everything read afresh).
   lastBuilt = Number((await fetch(`${PUBLISHED}mirror/index.json`, { signal: AbortSignal.timeout(15_000) }).then(r => (r.ok ? r.json() : null)).catch(() => null))?.built) || 0;
   await readSeasons();
+  // MIRROR_ONLY=f1 (the workflow's "f1" part): F1's copies read again onto the
+  // site as last built, in a few minutes, not the whole night's mirror; the
+  // index (its patterns already there) stays as it was.
+  if (process.env.MIRROR_ONLY === 'f1') {
+    await f1();
+    console.log(`f1: ${stats.written} copies; ${stats.asked} asked, ${stats.failed} failed; ${((Date.now() - NOW) / 60_000).toFixed(1)} min`);
+    if (!stats.written) process.exit(1);
+    return;
+  }
   await leaguePhotos();
   await plPhotos();
   const t0 = Date.now();

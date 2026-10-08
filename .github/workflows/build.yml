@@ -27,7 +27,7 @@ on:
       part:
         description: What to build (the rest as last built)
         type: choice
-        options: [winprob, sports, mirror, cutouts, watch, everything]
+        options: [winprob, sports, mirror, f1, cutouts, watch, everything]
         default: winprob
       buses:
         description: Rebuild the bus packs too
@@ -130,15 +130,18 @@ jobs:
           KIT: shared/kit
           SPORTS_LIB: sports-app/public/lib
       # The mirror: copies of the reads the apps would ask the proxy for (mirror.mjs).
+      # ("f1" by hand: only F1's copies again, in a few minutes.)
       - name: Mirror
-        if: env.FULL == 'true' || env.PART == 'mirror'
+        if: env.FULL == 'true' || env.PART == 'mirror' || env.PART == 'f1'
         run: node mirror.mjs
         env:
           KIT: shared/kit
           SPORTS_LIB: sports-app/public/lib
-      # What each recent game can be watched as (watch.mjs): every run.
+          MIRROR_ONLY: ${{ env.PART == 'f1' && 'f1' || '' }}
+      # What each recent game can be watched as (watch.mjs): every run but "f1".
       # Never the night's undoing: a failure here leaves last run's pack out, the rest deploys.
       - name: Watch
+        if: env.PART != 'f1'
         continue-on-error: true
         timeout-minutes: 25
         run: node watch.mjs
