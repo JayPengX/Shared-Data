@@ -97,21 +97,34 @@ async function slot(fn) {
   }
 }
 export const stats = { asked: 0, failed: 0, written: 0, bytes: 0, kinds: {} };
+// Jolpica allows about 4 asks a second (and 500 an hour): its asks go one
+// after another, JOLPICA_GAP apart, and a 429 waits as long as it says. Asked
+// all at once, half of F1's results were refused every night and the app
+// fell back to the proxy (2026-10-08: 21 of 43 drivers' and teams' missing).
+const JOLPICA_GAP = 350;
+let jolpicaTurn = Promise.resolve();
+const jolpicaPaced = fn => {
+  const run = jolpicaTurn.then(fn);
+  jolpicaTurn = run.catch(() => {}).then(() => sleep(JOLPICA_GAP));
+  return run;
+};
 function get(url, { text = false } = {}) {
+  const jolpica = url.startsWith('https://api.jolpi.ca/');
+  const ask = () => fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (orbit-mirror)', Accept: text ? 'text/html' : 'application/json' }, signal: AbortSignal.timeout(30_000) });
   return slot(async () => {
     for (let attempt = 0; ; attempt++) {
       stats.asked++;
       try {
-        const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (orbit-mirror)', Accept: text ? 'text/html' : 'application/json' }, signal: AbortSignal.timeout(30_000) });
+        const res = await (jolpica ? jolpicaPaced(ask) : ask());
         if (res.status === 200) return text ? await res.text() : await res.json();
         if (res.status === 404 || res.status === 400) throw Object.assign(new Error(`HTTP ${res.status}`), { final: true });
-        throw new Error(`HTTP ${res.status}`);
+        throw Object.assign(new Error(`HTTP ${res.status}`), { wait: res.status === 429 ? Math.min(60, Number(res.headers.get('retry-after')) || 10) * 1000 : 0 });
       } catch (error) {
-        if (error.final || attempt >= 2) {
+        if (error.final || attempt >= (jolpica ? 4 : 2)) {
           stats.failed++;
           return null;
         }
-        await sleep(1500 * (attempt + 1));
+        await sleep(error.wait || 1500 * (attempt + 1));
       }
     }
   });
